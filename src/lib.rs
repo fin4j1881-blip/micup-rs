@@ -11,12 +11,14 @@
 
 pub mod cdn;
 pub mod client;
+pub mod components;
 pub mod embed;
 pub mod error;
 pub mod gateway;
 pub mod models;
 
 pub use client::Client;
+pub use components::{ButtonStyle, Component, ComponentType, SelectOption};
 pub use embed::{Embed, EmbedField};
 pub use error::MicupError;
 pub use gateway::Shard;
@@ -25,6 +27,7 @@ pub use models::{Channel, Guild, Id, Member, Role, User};
 pub mod prelude {
     pub use crate::cdn;
     pub use crate::client::Client;
+    pub use crate::components::{ButtonStyle, Component, ComponentType, SelectOption};
     pub use crate::embed::Embed;
     pub use crate::error::MicupError;
     pub use crate::gateway::Shard;
@@ -61,6 +64,14 @@ mod tests {
         let field_val = json["fields"][0]["value"].as_str().unwrap();
         assert_eq!(field_val.chars().count(), 1024);
         assert!(field_val.ends_with("..."));
+    }
+
+    #[test]
+    fn test_button_serialization_skips_disabled_false() {
+        let btn = Component::button(ButtonStyle::Primary, "Test", "custom_1");
+        let json = serde_json::to_value(&btn).unwrap();
+        // Micup Fluxer: disabled false ise JSON içinde yer almamalıdır!
+        assert!(json.get("disabled").is_none());
     }
 
     #[test]
