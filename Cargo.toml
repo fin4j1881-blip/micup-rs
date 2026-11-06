@@ -1,0 +1,25 @@
+[package]
+name = "micup"
+version = "0.1.0"
+edition = "2021"
+authors = ["Kerem <kerem4444xerer@gmail.com>"]
+description = "Micup.gg / Fluxer botları için resmi olmayan, Micup API ve CDN uyumlu Rust kütüphanesi"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/fin4j1881-blip/micup-rs"
+readme = "README.md"
+keywords = ["micup", "fluxer", "bot", "discord", "api"]
+categories = ["api-bindings", "asynchronous"]
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+tracing = "0.1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
