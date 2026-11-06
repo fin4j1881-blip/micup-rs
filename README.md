@@ -1,6 +1,6 @@
 # micup-rs 🦀
 
-Micup.gg / Fluxer platformu için resmi olmayan, Micup API ve CDN mimarisine özel geliştirilmiş modern, asenkron Rust kütüphanesi.
+Micup.gg / Fluxer platformu için resmi olmayan, Micup API ve CDN mimarisine özel geliştirilmiş modern, asenkron ve eksiksiz Rust kütüphanesi.
 
 Standart Discord kütüphaneleri (Serenity, Twilight vb.) Micup üzerinde kullanılırken yaşanan yapısal ve şema uyumsuzluklarını dahili olarak çözer.
 
@@ -8,23 +8,39 @@ Standart Discord kütüphaneleri (Serenity, Twilight vb.) Micup üzerinde kullan
 
 ## 🚀 Çözülen Micup / Fluxer Sorunları
 
-1. **Doğru Medya CDN URL'leri:** 
+1. **Doğru Medya CDN URL'leri (`cdn.rs`):** 
    - Standart kütüphaneler kırık `cdn.discordapp.com` linkleri üretir.
    - `micup-rs`, avatar, banner, sunucu ikonu ve animasyonlu GIF'leri doğrudan `https://media.micup.gg` üzerinden 4096px çözünürlükle sunar.
 
-2. **Toleranslı Guild / Model Çözümleme:**
+2. **Toleranslı Guild / Model Çözümleme (`models.rs`):**
    - Micup API'sinde `preferred_locale`, takviye çubuğu veya bazı opsiyonel Discord alanları `null` döner veya hiç gönderilmez.
    - `micup-rs`, bu alanları otomatik olarak varsayılan değerlere eşler ve serileştirme hatası fırlatmaz.
 
-3. **Otomatik Embed Alanı Sanitasyonu:**
+3. **Otomatik Embed Alanı Sanitasyonu (`embed.rs`):**
    - Discord/Micup API'si 1024 karakteri aşan embed alanlarında veya boş başlıklarda `400 Bad Request (Invalid form body)` hatası verir.
-   - `micup-rs::Embed`, 1024 sınırını aşan metinleri güvenli bir şekilde `...` ile kırpar ve boş alanları düzeltir.
+   - `micup-rs::Embed`, 1024 sınırını aşan metinleri güvenli bir şekilde `...` ile kırpar ve boş alanları `-` yapar.
 
-4. **Akıllı ID Ayrıştırma:**
+4. **Bileşen (Component) Sanitasyonu (`components.rs`):**
+   - Micup Fluxer API'sinde butonlarda `disabled: false` gönderilmesi `Invalid form body` hatasına yol açar.
+   - `micup-rs`, yalnızca `disabled: true` olduğunda bu alanı serileştirir; `false` durumunda JSON'dan tamamen temizler.
+
+5. **Akıllı ID Ayrıştırma:**
    - Hem JSON string (`"1567986170364166147"`) hem de sayısal tamsayı (`1567986170364166147`) formatındaki Snowflake ID'lerini şeffaf şekilde çözer.
 
-5. **Dahili Gateway & Kalp Atışı:**
+6. **Dahili Gateway & Kalp Atışı (`gateway.rs`):**
    - `wss://micup.gg/gateway` soketine otomatik bağlanır, `Hello (op 10)` paketinden aralığı okur ve periyodik `Heartbeat (op 1)` atışlarını arka planda yürütür.
+
+---
+
+## 📚 Desteklenen API Uç Noktaları
+
+- **Kullanıcılar:** `current_user()`, `get_user(id)`
+- **Sunucular:** `get_guild(id)`, `get_guild_channels(id)`, `get_guild_roles(id)`, `create_channel(...)`
+- **Moderasyon:** `kick(...)`, `ban(...)`, `unban(...)`, `set_timeout(...)`, `add_role(...)`, `remove_role(...)`
+- **Mesajlar:** `send_message(...)`, `delete_message(...)`, `bulk_delete_messages(...)`
+- **Slash Komutları:** `get_global_commands(...)`, `set_global_commands(...)`, `get_guild_commands(...)`, `set_guild_commands(...)`
+- **Etkileşim Yanıtları:** `create_interaction_response(...)`, `create_followup_message(...)`
+- **Denetim & Güvenlik:** `get_audit_logs(...)`, `get_bans(...)`, `get_guild_invites(...)`
 
 ---
 
@@ -59,6 +75,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let guild = client.get_guild(1567986170364166147).await?;
     println!("Sunucu Adı: {}", guild.name);
 
+    // Buton oluştur (disabled: false hatasından korumalı)
+    let button = Component::button(ButtonStyle::Success, "Kabul Et", "btn_accept");
+    let row = Component::action_row(vec![button]);
+
     // Otomatik kırpma korumalı Embed oluştur
     let embed = Embed::new()
         .title("Hoş Geldiniz!")
@@ -68,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .field("Açıklama", "x".repeat(1500), false); // 1024 karakter sınırına otomatik kırpılır
 
     // Mesaj gönder
-    client.send_message(1567986170364166150, None, vec![embed]).await?;
+    client.send_message(1567986170364166150, None, vec![embed], vec![row]).await?;
 
     Ok(())
 }

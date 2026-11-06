@@ -11,27 +11,47 @@
 
 pub mod cdn;
 pub mod client;
+pub mod commands;
 pub mod components;
 pub mod embed;
 pub mod error;
 pub mod gateway;
+pub mod interaction;
 pub mod models;
 
 pub use client::Client;
+pub use commands::{Command, CommandOption, CommandOptionChoice, CommandOptionType, CommandType, CreateCommand};
 pub use components::{ButtonStyle, Component, ComponentType, SelectOption};
 pub use embed::{Embed, EmbedField};
 pub use error::MicupError;
 pub use gateway::Shard;
-pub use models::{Channel, Guild, Id, Member, Role, User};
+pub use interaction::{
+    CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
+    InteractionResponseMessage, InteractionResponseType, InteractionType,
+};
+pub use models::{
+    Attachment, AuditLog, AuditLogEntry, Ban, Channel, Emoji, Guild, Id, Invite, Member, Role,
+    User, Webhook,
+};
 
 pub mod prelude {
     pub use crate::cdn;
     pub use crate::client::Client;
+    pub use crate::commands::{
+        Command, CommandOption, CommandOptionChoice, CommandOptionType, CommandType, CreateCommand,
+    };
     pub use crate::components::{ButtonStyle, Component, ComponentType, SelectOption};
     pub use crate::embed::Embed;
     pub use crate::error::MicupError;
     pub use crate::gateway::Shard;
-    pub use crate::models::{Channel, Guild, Id, Member, Role, User};
+    pub use crate::interaction::{
+        CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
+        InteractionResponseMessage, InteractionResponseType, InteractionType,
+    };
+    pub use crate::models::{
+        Attachment, AuditLog, AuditLogEntry, Ban, Channel, Emoji, Guild, Id, Invite, Member, Role,
+        User, Webhook,
+    };
 }
 
 #[cfg(test)]

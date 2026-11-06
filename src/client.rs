@@ -211,6 +211,105 @@ impl Client {
     }
 
     // =========================================================================
+    // Slash Komutları (Application Commands)
+    // =========================================================================
+
+    /// Global slash komutlarını listeler (`GET /applications/{app_id}/commands`).
+    pub async fn get_global_commands(&self, application_id: u64) -> Result<Vec<crate::commands::Command>, MicupError> {
+        self.get(&format!("/applications/{application_id}/commands")).await
+    }
+
+    /// Global slash komutlarını toplu olarak günceller / kaydeder (`PUT /applications/{app_id}/commands`).
+    pub async fn set_global_commands(
+        &self,
+        application_id: u64,
+        commands: &[crate::commands::CreateCommand],
+    ) -> Result<Vec<crate::commands::Command>, MicupError> {
+        self.put(&format!("/applications/{application_id}/commands"), &commands).await
+    }
+
+    /// Sunucuya özel slash komutlarını listeler (`GET /applications/{app_id}/guilds/{guild_id}/commands`).
+    pub async fn get_guild_commands(
+        &self,
+        application_id: u64,
+        guild_id: u64,
+    ) -> Result<Vec<crate::commands::Command>, MicupError> {
+        self.get(&format!("/applications/{application_id}/guilds/{guild_id}/commands")).await
+    }
+
+    /// Sunucuya özel slash komutlarını toplu günceller (`PUT /applications/{app_id}/guilds/{guild_id}/commands`).
+    pub async fn set_guild_commands(
+        &self,
+        application_id: u64,
+        guild_id: u64,
+        commands: &[crate::commands::CreateCommand],
+    ) -> Result<Vec<crate::commands::Command>, MicupError> {
+        self.put(
+            &format!("/applications/{application_id}/guilds/{guild_id}/commands"),
+            &commands,
+        )
+        .await
+    }
+
+    // =========================================================================
+    // Etkileşim Yanıtları (Interaction Responses)
+    // =========================================================================
+
+    /// Gelen etkileşime (Slash komut veya buton) ilk yanıtı verir (`POST /interactions/{id}/{token}/callback`).
+    pub async fn create_interaction_response(
+        &self,
+        interaction_id: u64,
+        interaction_token: &str,
+        response: &crate::interaction::InteractionResponse,
+    ) -> Result<(), MicupError> {
+        let url = format!(
+            "{}/interactions/{interaction_id}/{interaction_token}/callback",
+            self.base_url
+        );
+        let resp = self.http.post(&url).json(response).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(MicupError::Api { status, message: body });
+        }
+        Ok(())
+    }
+
+    /// Defer edilmiş etkileşime sonradan takip yanıtı (followup) gönderir.
+    pub async fn create_followup_message(
+        &self,
+        application_id: u64,
+        interaction_token: &str,
+        message: &crate::interaction::InteractionResponseMessage,
+    ) -> Result<Value, MicupError> {
+        self.post(
+            &format!("/webhooks/{application_id}/{interaction_token}"),
+            message,
+        )
+        .await
+    }
+
+    // =========================================================================
+    // Denetim Kaydı, Yasaklar ve Davetler (Audit Logs, Bans, Invites)
+    // =========================================================================
+
+    /// Sunucu denetim kaydını çeker (`GET /guilds/{id}/audit-logs`).
+    pub async fn get_audit_logs(&self, guild_id: u64, limit: Option<u64>) -> Result<crate::models::AuditLog, MicupError> {
+        let lim = limit.unwrap_or(50);
+        self.get(&format!("/guilds/{guild_id}/audit-logs?limit={lim}")).await
+    }
+
+    /// Sunucudaki yasaklı kullanıcıları listeler (`GET /guilds/{id}/bans`).
+    pub async fn get_bans(&self, guild_id: u64) -> Result<Vec<crate::models::Ban>, MicupError> {
+        self.get(&format!("/guilds/{guild_id}/bans")).await
+    }
+
+    /// Sunucudaki davetleri listeler (`GET /guilds/{id}/invites`).
+    pub async fn get_guild_invites(&self, guild_id: u64) -> Result<Vec<crate::models::Invite>, MicupError> {
+        self.get(&format!("/guilds/{guild_id}/invites")).await
+    }
+
+    // =========================================================================
     // Dahili HTTP yardımcıları
     // =========================================================================
 

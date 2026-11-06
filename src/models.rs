@@ -4,6 +4,9 @@ pub mod constants {
     pub const CDN_BASE: &str = "https://media.micup.gg";
 }
 
+pub mod extra;
+pub use extra::{Attachment, AuditLog, AuditLogEntry, Ban, Emoji, Invite, Webhook};
+
 use std::fmt;
 use serde::{Deserialize, Serialize};
 
