@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct EmbedField {
     pub name: String,
     pub value: String,
+    #[serde(default)]
     pub inline: bool,
 }
 
@@ -90,7 +91,12 @@ impl Embed {
         self
     }
 
-    pub fn field(mut self, name: impl Into<String>, value: impl Into<String>, inline: bool) -> Self {
+    pub fn field(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+        inline: bool,
+    ) -> Self {
         self.fields.push(EmbedField {
             name: name.into(),
             value: value.into(),

@@ -6,8 +6,9 @@
 //! - Micup'ın dönmediği `preferred_locale` ve takviye çubuğu gibi alanlar yüzünden `Guild` modelleri çöker.
 //! - Boş buton veya menü dizilerinde API `Invalid form body` hatası verir.
 //! - Embed alanlarında 1024 karakter ve 256 başlık sınırı manuel yönetilmezse hata alınır.
+//! - 3B Oda Sahnesi (`voice-room/stage`) ve `MANAGE_ROOM_STAGE` (`1 << 62`) gibi Micup'a özgü sistemleri tanımazlar.
 //!
-//! `micup-rs`, tüm bu platform uyumsuzluklarını dahili olarak çözer.
+//! `micup-rs`, tüm bu platform uyumsuzluklarını ve özel sistemleri dahili olarak çözer.
 
 pub mod cdn;
 pub mod client;
@@ -18,20 +19,30 @@ pub mod error;
 pub mod gateway;
 pub mod interaction;
 pub mod models;
+pub mod permissions;
+pub mod stage;
 
 pub use client::Client;
-pub use commands::{Command, CommandOption, CommandOptionChoice, CommandOptionType, CommandType, CreateCommand};
-pub use components::{ButtonStyle, Component, ComponentType, SelectOption};
+pub use commands::{
+    Command, CommandOption, CommandOptionChoice, CommandOptionType, CommandType, CreateCommand,
+};
+pub use components::{ButtonStyle, Component, ComponentType, SelectOption, TextInputStyle};
 pub use embed::{Embed, EmbedField};
 pub use error::MicupError;
-pub use gateway::Shard;
+pub use gateway::{GatewayPayload, GatewayPresence, Shard};
 pub use interaction::{
     CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
-    InteractionResponseMessage, InteractionResponseType, InteractionType,
+    InteractionResponseData, InteractionResponseMessage, InteractionResponseType, InteractionType,
+    ModalResponseData,
 };
 pub use models::{
-    Attachment, AuditLog, AuditLogEntry, Ban, Channel, Emoji, Guild, Id, Invite, Member, Role,
-    User, Webhook,
+    Attachment, AuditLog, AuditLogEntry, Ban, Channel, Emoji, FluxerDiscovery, GatewayBotInfo,
+    Guild, Id, Invite, Member, Message, Reaction, Role, User, Webhook,
+};
+pub use permissions::Permissions;
+pub use stage::{
+    BoardStyle, ScoreboardEntry, SetVoiceRoomStage, StageBoard, StageHost, StageTv, StageVideo,
+    VoiceRoomEffect, VoiceRoomStage, VoiceRoomStageResponse,
 };
 
 pub mod prelude {
@@ -40,17 +51,24 @@ pub mod prelude {
     pub use crate::commands::{
         Command, CommandOption, CommandOptionChoice, CommandOptionType, CommandType, CreateCommand,
     };
-    pub use crate::components::{ButtonStyle, Component, ComponentType, SelectOption};
+    pub use crate::components::{
+        ButtonStyle, Component, ComponentType, SelectOption, TextInputStyle,
+    };
     pub use crate::embed::Embed;
     pub use crate::error::MicupError;
-    pub use crate::gateway::Shard;
+    pub use crate::gateway::{GatewayPresence, Shard};
     pub use crate::interaction::{
         CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
         InteractionResponseMessage, InteractionResponseType, InteractionType,
     };
     pub use crate::models::{
-        Attachment, AuditLog, AuditLogEntry, Ban, Channel, Emoji, Guild, Id, Invite, Member, Role,
-        User, Webhook,
+        Attachment, AuditLog, AuditLogEntry, Ban, Channel, Emoji, FluxerDiscovery, GatewayBotInfo,
+        Guild, Id, Invite, Member, Message, Reaction, Role, User, Webhook,
+    };
+    pub use crate::permissions::Permissions;
+    pub use crate::stage::{
+        BoardStyle, ScoreboardEntry, SetVoiceRoomStage, StageBoard, StageHost, StageTv, StageVideo,
+        VoiceRoomEffect, VoiceRoomStage,
     };
 }
 
@@ -74,6 +92,12 @@ mod tests {
             icon,
             "https://media.micup.gg/icons/1567986170364166147/cccae7b5.png?size=4096"
         );
+
+        let emoji = cdn::emoji_url(987654321, false);
+        assert_eq!(emoji, "https://media.micup.gg/emojis/987654321.png");
+
+        let sticker = cdn::sticker_url(11223344);
+        assert_eq!(sticker, "https://media.micup.gg/stickers/11223344.png");
     }
 
     #[test]
@@ -96,7 +120,6 @@ mod tests {
 
     #[test]
     fn test_guild_deserialization_with_missing_fields() {
-        // Micup'ın döndüğü gerçek payload
         let raw = r#"{
             "id": "1567986170364166147",
             "name": "Finmos Development",
@@ -112,5 +135,38 @@ mod tests {
         assert_eq!(guild.name, "Finmos Development");
         assert!(guild.preferred_locale.is_none());
         assert!(guild.premium_progress_bar_enabled.is_none());
+    }
+
+    #[test]
+    fn test_stage_board_serialization() {
+        let board = StageBoard::new()
+            .style(BoardStyle::Neon)
+            .title("Bilgi Yarışması")
+            .text("Soru 1: Rust ne zaman duyuruldu?")
+            .accent(0x7c5cff)
+            .score(ScoreboardEntry::new("Kerem", 100).with_user(1566954479021461510))
+            .message_buttons(1234567890);
+
+        let stage = SetVoiceRoomStage::new()
+            .board(board)
+            .host(StageHost::new("ithp-kulaklik"))
+            .ttl(1800);
+
+        let json = serde_json::to_value(&stage).unwrap();
+        assert_eq!(json["ttl_seconds"], 1800);
+        assert_eq!(json["tv"]["type"], "board");
+        assert_eq!(json["tv"]["style"], "neon");
+        assert_eq!(json["tv"]["title"], "Bilgi Yarışması");
+        assert_eq!(json["host"]["character"], "ithp-kulaklik");
+    }
+
+    #[test]
+    fn test_permissions_bitflags() {
+        let mut perms = Permissions::new(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES);
+        assert!(!perms.can_manage_stage());
+
+        perms.insert(Permissions::MANAGE_ROOM_STAGE);
+        assert!(perms.can_manage_stage());
+        assert_eq!(Permissions::MANAGE_ROOM_STAGE, 1u64 << 62);
     }
 }

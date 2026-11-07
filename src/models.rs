@@ -5,10 +5,54 @@ pub mod constants {
 }
 
 pub mod extra;
-pub use extra::{Attachment, AuditLog, AuditLogEntry, Ban, Emoji, Invite, Webhook};
+pub use extra::{
+    Attachment, AuditLog, AuditLogEntry, Ban, Emoji, Invite, Message, Reaction, Webhook,
+};
 
-use std::fmt;
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// Micup / Fluxer ağ geçidi bot oturum bilgisi (`GET /gateway/bot`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GatewayBotInfo {
+    pub url: String,
+    pub shards: u32,
+    pub session_start_limit: SessionStartLimit,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionStartLimit {
+    pub total: u32,
+    pub remaining: u32,
+    pub reset_after: u64,
+    pub max_concurrency: u32,
+}
+
+/// Micup platform keşif belgesi (`GET /.well-known/fluxer`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FluxerDiscovery {
+    #[serde(default)]
+    pub api_code_version: Option<u64>,
+    pub endpoints: DiscoveryEndpoints,
+    #[serde(default)]
+    pub features: Option<serde_json::Value>,
+    #[serde(default)]
+    pub limits: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiscoveryEndpoints {
+    pub api: String,
+    pub api_public: String,
+    pub gateway: String,
+    pub media: String,
+    #[serde(default)]
+    pub upload_relay: Option<String>,
+    #[serde(default)]
+    pub static_cdn: Option<String>,
+    #[serde(default)]
+    pub webapp: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct Id(pub u64);
@@ -61,8 +105,11 @@ impl<'de> Deserialize<'de> for Id {
                 Ok(Id(v))
             }
 
-            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
-                Ok(Id(v as u64))
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                u64::try_from(v).map(Id).map_err(serde::de::Error::custom)
             }
 
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -93,6 +140,10 @@ pub struct User {
     pub banner: Option<String>,
     #[serde(default)]
     pub accent_color: Option<u64>,
+    #[serde(default)]
+    pub flags: Option<i64>,
+    #[serde(default)]
+    pub public_flags: Option<i64>,
 }
 
 impl User {
@@ -105,7 +156,9 @@ impl User {
     }
 
     pub fn banner_url(&self) -> Option<String> {
-        self.banner.as_deref().map(|b| crate::cdn::banner_url(self.id.get(), b))
+        self.banner
+            .as_deref()
+            .map(|b| crate::cdn::banner_url(self.id.get(), b))
     }
 }
 
@@ -123,6 +176,8 @@ pub struct Member {
     pub communication_disabled_until: Option<String>,
     #[serde(default)]
     pub banner: Option<String>,
+    #[serde(default)]
+    pub pending: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -188,7 +243,7 @@ pub struct Guild {
     #[serde(default)]
     pub roles: Vec<Role>,
     #[serde(default)]
-    pub emojis: Vec<serde_json::Value>,
+    pub emojis: Vec<Emoji>,
     #[serde(default)]
     pub features: Vec<String>,
     #[serde(default)]
@@ -201,14 +256,20 @@ pub struct Guild {
 
 impl Guild {
     pub fn icon_url(&self) -> Option<String> {
-        self.icon.as_deref().map(|h| crate::cdn::guild_icon_url(self.id.get(), h))
+        self.icon
+            .as_deref()
+            .map(|h| crate::cdn::guild_icon_url(self.id.get(), h))
     }
 
     pub fn banner_url(&self) -> Option<String> {
-        self.banner.as_deref().map(|h| crate::cdn::guild_banner_url(self.id.get(), h))
+        self.banner
+            .as_deref()
+            .map(|h| crate::cdn::guild_banner_url(self.id.get(), h))
     }
 
     pub fn splash_url(&self) -> Option<String> {
-        self.splash.as_deref().map(|h| crate::cdn::splash_url(self.id.get(), h))
+        self.splash
+            .as_deref()
+            .map(|h| crate::cdn::splash_url(self.id.get(), h))
     }
 }

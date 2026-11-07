@@ -206,12 +206,27 @@ impl InteractionResponseMessage {
     }
 }
 
+/// Modal açma yanıtı verisi.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModalResponseData {
+    pub custom_id: String,
+    pub title: String,
+    pub components: Vec<Component>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InteractionResponseData {
+    Message(InteractionResponseMessage),
+    Modal(ModalResponseData),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InteractionResponse {
     #[serde(rename = "type")]
     pub kind: InteractionResponseType,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<InteractionResponseMessage>,
+    pub data: Option<InteractionResponseData>,
 }
 
 impl InteractionResponse {
@@ -220,12 +235,22 @@ impl InteractionResponse {
         let flags = if ephemeral { Some(64) } else { None };
         Self {
             kind: InteractionResponseType::DeferredChannelMessageWithSource,
-            data: Some(InteractionResponseMessage {
-                content: None,
-                embeds: Vec::new(),
-                components: Vec::new(),
-                flags,
-            }),
+            data: Some(InteractionResponseData::Message(
+                InteractionResponseMessage {
+                    content: None,
+                    embeds: Vec::new(),
+                    components: Vec::new(),
+                    flags,
+                },
+            )),
+        }
+    }
+
+    /// Buton veya menü bileşen etkileşimini defer eder (yeni mesaj atmaz, butonu onaylar).
+    pub fn defer_update() -> Self {
+        Self {
+            kind: InteractionResponseType::DeferredUpdateMessage,
+            data: None,
         }
     }
 
@@ -233,7 +258,31 @@ impl InteractionResponse {
     pub fn message(msg: InteractionResponseMessage) -> Self {
         Self {
             kind: InteractionResponseType::ChannelMessageWithSource,
-            data: Some(msg),
+            data: Some(InteractionResponseData::Message(msg)),
+        }
+    }
+
+    /// Mevcut bileşenin mesajını günceller.
+    pub fn update_message(msg: InteractionResponseMessage) -> Self {
+        Self {
+            kind: InteractionResponseType::UpdateMessage,
+            data: Some(InteractionResponseData::Message(msg)),
+        }
+    }
+
+    /// Kullanıcıya modal popup formu açar.
+    pub fn modal(
+        custom_id: impl Into<String>,
+        title: impl Into<String>,
+        components: Vec<Component>,
+    ) -> Self {
+        Self {
+            kind: InteractionResponseType::Modal,
+            data: Some(InteractionResponseData::Modal(ModalResponseData {
+                custom_id: custom_id.into(),
+                title: title.into(),
+                components,
+            })),
         }
     }
 }

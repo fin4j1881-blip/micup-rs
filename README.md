@@ -2,63 +2,61 @@
 
 Micup.gg / Fluxer platformu için resmi olmayan, Micup API ve CDN mimarisine özel geliştirilmiş modern, asenkron ve eksiksiz Rust kütüphanesi.
 
-Standart Discord kütüphaneleri (Serenity, Twilight vb.) Micup üzerinde kullanılırken yaşanan yapısal ve şema uyumsuzluklarını dahili olarak çözer.
+Standart Discord kütüphaneleri (Serenity, Twilight vb.) Micup üzerinde kullanılırken yaşanan yapısal uyumsuzlukları dahili olarak çözer ve **Micup'a özgü 3B Oda Sahnesi (Voice Room Stage)** gibi sistemleri birinci sınıf destekler.
 
 ---
 
-## 🚀 Çözülen Micup / Fluxer Sorunları
+## 🚀 Çözülen Micup / Fluxer Sorunları & Özel Sistemler
 
-1. **Doğru Medya CDN URL'leri (`cdn.rs`):** 
+1. **3B Oda Sahnesi Desteği (`stage.rs`):**
+   - Micup'a özgü sesli kanal 3B odasında botun sunucu NPC karakteri (`host`) olarak durması.
+   - TV'de Neon, Tahta ve Sade stil panolar (`StageBoard`), skor tabloları ve video (`StageVideo`) oynatımı.
+   - TV panosuna interaktif mesaj butonları bağlama ve tıklama etkileşimlerini karşılama.
+   - Odadaki herkese tek seferlik anlar (konfeti, spot ışığı, karakter dansı/dalgası/emojisi) gönderme (`VoiceRoomEffect`).
+
+2. **Micup İzin Bitleri (`permissions.rs`):**
+   - Micup'a özgü `MANAGE_ROOM_STAGE` (`1 << 62`), `PIN_MESSAGES` (`1 << 51`), `BYPASS_SLOWMODE` (`1 << 52`), `UPDATE_RTC_REGION` (`1 << 53`) ve `VIEW_CHANNEL_MEMBERS` (`1 << 54`) izin bitleri.
+   - Bot davet bağlantısı oluşturma (`Permissions::bot_invite_url`).
+
+3. **Gelişmiş Gateway & Dayanıklılık (`gateway.rs`):**
+   - Otomatik `Resume (op 6)` ve `session_id` / `last_seq` takibi ile kesintisiz yeniden bağlanma.
+   - Heartbeat ACK takibi ile zombi bağlantı tespiti ve otomatik soket yenileme.
+   - `Opcode 7 (Reconnect)` ve `Opcode 9 (Invalid Session)` akıllı kurtarma.
+   - Bot durum metni (`Custom Status`) ve presence desteği (`with_presence`).
+
+4. **Doğru Medya CDN URL'leri (`cdn.rs`):** 
    - Standart kütüphaneler kırık `cdn.discordapp.com` linkleri üretir.
-   - `micup-rs`, avatar, banner, sunucu ikonu ve animasyonlu GIF'leri doğrudan `https://media.micup.gg` üzerinden 4096px çözünürlükle sunar.
+   - `micup-rs`, avatar, banner, sunucu ikonu, çıkartma ve emojileri doğrudan `https://media.micup.gg` üzerinden sağlar.
+   - 6 varsayılan Micup avatarı (`0-5.png`) ve özel avatar formatları (`.png`, `.gif`).
 
-2. **Toleranslı Guild / Model Çözümleme (`models.rs`):**
-   - Micup API'sinde `preferred_locale`, takviye çubuğu veya bazı opsiyonel Discord alanları `null` döner veya hiç gönderilmez.
-   - `micup-rs`, bu alanları otomatik olarak varsayılan değerlere eşler ve serileştirme hatası fırlatmaz.
+5. **Toleranslı Guild & Model Çözümleme (`models.rs`):**
+   - Micup API'sinde `preferred_locale`, takviye çubuğu veya bazı opsiyonel alanlar `null` döner veya hiç gönderilmez.
+   - `micup-rs`, bu alanları otomatik olarak varsayılan değerlere eşler.
 
-3. **Otomatik Embed Alanı Sanitasyonu (`embed.rs`):**
-   - Discord/Micup API'si 1024 karakteri aşan embed alanlarında veya boş başlıklarda `400 Bad Request (Invalid form body)` hatası verir.
-   - `micup-rs::Embed`, 1024 sınırını aşan metinleri güvenli bir şekilde `...` ile kırpar ve boş alanları `-` yapar.
-
-4. **Bileşen (Component) Sanitasyonu (`components.rs`):**
-   - Micup Fluxer API'sinde butonlarda `disabled: false` gönderilmesi `Invalid form body` hatasına yol açar.
-   - `micup-rs`, yalnızca `disabled: true` olduğunda bu alanı serileştirir; `false` durumunda JSON'dan tamamen temizler.
-
-5. **Akıllı ID Ayrıştırma:**
-   - Hem JSON string (`"1567986170364166147"`) hem de sayısal tamsayı (`1567986170364166147`) formatındaki Snowflake ID'lerini şeffaf şekilde çözer.
-
-6. **Dahili Gateway & Kalp Atışı (`gateway.rs`):**
-   - `wss://micup.gg/gateway` soketine otomatik bağlanır, `Hello (op 10)` paketinden aralığı okur ve periyodik `Heartbeat (op 1)` atışlarını arka planda yürütür.
+6. **Bileşen & Embed Sanitasyonu:**
+   - Butonlarda `disabled: false` gönderilmesini engelleyerek API `Invalid form body` hatasını önler.
+   - 1024 karakter embed alan sınırını ve boş alanları güvenli biçimde sanitasyon yapar.
+   - Modallar ve Text Input (`ComponentType::TextInput`) bileşenleri tam desteklidir.
 
 ---
 
 ## 📚 Desteklenen API Uç Noktaları
 
-- **Kullanıcılar:** `current_user()`, `get_user(id)`
-- **Sunucular:** `get_guild(id)`, `get_guild_channels(id)`, `get_guild_roles(id)`, `create_channel(...)`
-- **Moderasyon:** `kick(...)`, `ban(...)`, `unban(...)`, `set_timeout(...)`, `add_role(...)`, `remove_role(...)`
-- **Mesajlar:** `send_message(...)`, `delete_message(...)`, `bulk_delete_messages(...)`
-- **Slash Komutları:** `get_global_commands(...)`, `set_global_commands(...)`, `get_guild_commands(...)`, `set_guild_commands(...)`
-- **Etkileşim Yanıtları:** `create_interaction_response(...)`, `create_followup_message(...)`
-- **Denetim & Güvenlik:** `get_audit_logs(...)`, `get_bans(...)`, `get_guild_invites(...)`
+- **3B Oda Sahnesi:** `get_voice_room_stage()`, `set_voice_room_stage()`, `clear_voice_room_stage()`, `send_voice_room_effect()`
+- **Keşif & Gateway:** `get_discovery()` (`/.well-known/fluxer`), `get_gateway_bot()` (`/gateway/bot`)
+- **Mesajlar:** `send_message()`, `send_message_with_files()`, `get_message()`, `get_channel_messages()`, `edit_message()`, `delete_message()`, `bulk_delete_messages()`
+- **Tepkiler (Reactions):** `create_reaction()`, `delete_own_reaction()`, `delete_user_reaction()`, `get_reactions()`
+- **Sabitleme (Pins):** `pin_message()`, `unpin_message()`, `get_pinned_messages()`
+- **Kullanıcılar & Profil:** `current_user()`, `get_user()`, `edit_current_user()`
+- **Sunucular & Üyeler:** `get_guild()`, `get_guild_channels()`, `get_guild_roles()`, `create_channel()`, `get_member()`, `search_guild_members()`
+- **Moderasyon:** `kick()`, `ban()`, `unban()`, `set_timeout()`, `add_role()`, `remove_role()`
+- **Slash Komutları:** `get_global_commands()`, `set_global_commands()`, `get_guild_commands()`, `set_guild_commands()`
+- **Etkileşim Yanıtları:** `create_interaction_response()`, `create_followup_message()`
+- **Denetim & Güvenlik:** `get_audit_logs()`, `get_bans()`, `get_guild_invites()`
 
 ---
 
-## 📦 Kurulum
-
-`Cargo.toml` dosyanıza ekleyin:
-
-```toml
-[dependencies]
-micup = { path = "/mnt/depo/micup-rs" }
-tokio = { version = "1", features = ["full"] }
-```
-
----
-
-## 🛠️ Örnek Kullanım
-
-### REST İstemcisi ve Embed Gönderimi
+## 🛠️ Örnek Kullanım: 3B Oda Sahnesi Kurulumu
 
 ```rust
 use micup::prelude::*;
@@ -66,49 +64,55 @@ use micup::prelude::*;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new("MICUP_BOT_TOKEN")?;
+    let channel_id = 1567986170364166155; // Sesli kanal ID
 
-    // Bot profilini çek
-    let me = client.current_user().await?;
-    println!("Bot: {} (Avatar: {})", me.username, me.avatar_url());
+    // 1. TV Panosu ve Skor Tablosu Hazırla
+    let board = StageBoard::new()
+        .style(BoardStyle::Neon)
+        .title("Bilgi Yarışması")
+        .text("Soru 1: Micup bot kütüphanesi nedir?")
+        .accent(0x7c5cff)
+        .score(ScoreboardEntry::new("Kerem", 100))
+        .score(ScoreboardEntry::new("Oyuncu 2", 80));
 
-    // Sunucu bilgilerini al
-    let guild = client.get_guild(1567986170364166147).await?;
-    println!("Sunucu Adı: {}", guild.name);
+    // 2. Sahneyi TV panosu ve Sunucu NPC karakteri ile kur
+    let stage = SetVoiceRoomStage::new()
+        .board(board)
+        .host(StageHost::new("ithp-kulaklik").shirt_color(0x00FF88))
+        .ttl(1800);
 
-    // Buton oluştur (disabled: false hatasından korumalı)
-    let button = Component::button(ButtonStyle::Success, "Kabul Et", "btn_accept");
-    let row = Component::action_row(vec![button]);
+    client.set_voice_room_stage(channel_id, &stage).await?;
 
-    // Otomatik kırpma korumalı Embed oluştur
-    let embed = Embed::new()
-        .title("Hoş Geldiniz!")
-        .description("Micup.gg üzerinde çalışan modern bot.")
-        .color(0x00FF88)
-        .field("Durum", "Aktif", true)
-        .field("Açıklama", "x".repeat(1500), false); // 1024 karakter sınırına otomatik kırpılır
-
-    // Mesaj gönder
-    client.send_message(1567986170364166150, None, vec![embed], vec![row]).await?;
+    // 3. Odaya konfeti efekti gönder
+    client.send_voice_room_effect(channel_id, &VoiceRoomEffect::confetti()).await?;
 
     Ok(())
 }
 ```
 
-### Canlı Gateway (WebSocket) Olay Dinleyicisi
+---
+
+## 🛠️ Örnek Kullanım: Otomatik Yeniden Bağlanan Gateway
 
 ```rust
 use micup::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let shard = Shard::new("MICUP_BOT_TOKEN", 3276799); // Intents
+    let token = "MICUP_BOT_TOKEN";
+    let shard = Shard::new(token, 513) // Guilds (1) | GuildMessages (512)
+        .with_presence("online", Some("micup-rs ile çalışıyor"));
 
     shard.run(|event_name, data| async move {
         match event_name.as_str() {
-            "READY" => println!("Bot başarıyla bağlandı!"),
+            "READY" => {
+                println!("Bot bağlandı! Kullanıcı: {:?}", data["user"]["username"]);
+            }
             "MESSAGE_CREATE" => {
-                let content = data.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                println!("Yeni Mesaj: {}", content);
+                println!("Yeni mesaj: {:?}", data["content"]);
+            }
+            "INTERACTION_CREATE" => {
+                println!("Yeni etkileşim alındı!");
             }
             _ => {}
         }
@@ -120,5 +124,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-## 📄 Lisans
-MIT veya Apache-2.0
+## 📜 Lisans
+
+MIT OR Apache-2.0

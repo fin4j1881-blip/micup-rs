@@ -122,7 +122,11 @@ pub struct CommandOption {
 }
 
 impl CommandOption {
-    pub fn new(kind: CommandOptionType, name: impl Into<String>, description: impl Into<String>) -> Self {
+    pub fn new(
+        kind: CommandOptionType,
+        name: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
         Self {
             kind,
             name: name.into(),

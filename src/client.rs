@@ -1,13 +1,29 @@
-use std::time::Duration;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use serde::Serialize;
 use serde_json::Value;
+use std::time::Duration;
 
 use crate::components::Component;
 use crate::embed::Embed;
 use crate::error::MicupError;
 use crate::models::constants::API_BASE;
-use crate::models::{Channel, Guild, Id, Member, Role, User};
+use crate::models::{
+    Channel, FluxerDiscovery, GatewayBotInfo, Guild, Id, Member, Message, Role, User,
+};
+use crate::stage::{SetVoiceRoomStage, VoiceRoomEffect, VoiceRoomStage, VoiceRoomStageResponse};
+
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
 
 #[derive(Clone)]
 pub struct Client {
@@ -44,6 +60,25 @@ impl Client {
     }
 
     // =========================================================================
+    // Keşif ve Ağ Geçidi Bilgisi (Discovery & Gateway Info)
+    // =========================================================================
+
+    /// Micup platform keşif yapılandırmasını getirir (`GET /.well-known/fluxer`).
+    pub async fn get_discovery(&self) -> Result<FluxerDiscovery, MicupError> {
+        let resp = self
+            .http
+            .get("https://micup.gg/.well-known/fluxer")
+            .send()
+            .await?;
+        Self::handle_response(resp).await
+    }
+
+    /// Bot için önerilen ağ geçidi adresini ve shard limitlerini çeker (`GET /gateway/bot`).
+    pub async fn get_gateway_bot(&self) -> Result<GatewayBotInfo, MicupError> {
+        self.get("/gateway/bot").await
+    }
+
+    // =========================================================================
     // Kullanıcılar (Users)
     // =========================================================================
 
@@ -55,6 +90,35 @@ impl Client {
     /// Kullanıcı profili getirir (`GET /users/{id}`).
     pub async fn get_user(&self, user_id: u64) -> Result<User, MicupError> {
         self.get(&format!("/users/{user_id}")).await
+    }
+
+    /// Botun kendi profilini (kullanıcı adı, avatar, afiş) günceller (`PATCH /users/@me`).
+    ///
+    /// Micup kuralı: Bot adını saatte en fazla iki kez değiştirebilir.
+    pub async fn edit_current_user(
+        &self,
+        username: Option<&str>,
+        avatar: Option<&str>,
+        banner: Option<&str>,
+    ) -> Result<User, MicupError> {
+        #[derive(Serialize)]
+        struct Payload<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            username: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            avatar: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            banner: Option<&'a str>,
+        }
+        self.patch(
+            "/users/@me",
+            &Payload {
+                username,
+                avatar,
+                banner,
+            },
+        )
+        .await
     }
 
     // =========================================================================
@@ -106,28 +170,61 @@ impl Client {
 
     /// Sunucu üyesini çeker (`GET /guilds/{id}/members/{user_id}`).
     pub async fn get_member(&self, guild_id: u64, user_id: u64) -> Result<Member, MicupError> {
-        self.get(&format!("/guilds/{guild_id}/members/{user_id}")).await
+        self.get(&format!("/guilds/{guild_id}/members/{user_id}"))
+            .await
+    }
+
+    /// Sunucu üyelerini ada göre arar (`GET /guilds/{id}/members/search`).
+    ///
+    /// Micup'ta botlar sunucu başına saniyede 1 arama yapabilir.
+    pub async fn search_guild_members(
+        &self,
+        guild_id: u64,
+        query: &str,
+        limit: Option<u64>,
+    ) -> Result<Vec<Member>, MicupError> {
+        let lim = limit.unwrap_or(20).min(100);
+        let encoded = url_encode(query);
+        self.get(&format!(
+            "/guilds/{guild_id}/members/search?query={encoded}&limit={lim}"
+        ))
+        .await
     }
 
     /// Sunucudan üye atar (Kick: `DELETE /guilds/{id}/members/{user_id}`).
-    pub async fn kick(&self, guild_id: u64, user_id: u64, reason: Option<&str>) -> Result<(), MicupError> {
+    pub async fn kick(
+        &self,
+        guild_id: u64,
+        user_id: u64,
+        reason: Option<&str>,
+    ) -> Result<(), MicupError> {
         let path = format!("/guilds/{guild_id}/members/{user_id}");
         self.delete_with_reason(&path, reason).await
     }
 
     /// Sunucudan üyeyi yasaklar (Ban: `PUT /guilds/{id}/bans/{user_id}`).
-    pub async fn ban(&self, guild_id: u64, user_id: u64, reason: Option<&str>) -> Result<(), MicupError> {
+    pub async fn ban(
+        &self,
+        guild_id: u64,
+        user_id: u64,
+        reason: Option<&str>,
+    ) -> Result<(), MicupError> {
         #[derive(Serialize)]
         struct BanPayload<'a> {
             #[serde(skip_serializing_if = "Option::is_none")]
             reason: Option<&'a str>,
         }
-        self.put(&format!("/guilds/{guild_id}/bans/{user_id}"), &BanPayload { reason }).await
+        self.put(
+            &format!("/guilds/{guild_id}/bans/{user_id}"),
+            &BanPayload { reason },
+        )
+        .await
     }
 
     /// Kullanıcının yasağını kaldırır (Unban: `DELETE /guilds/{id}/bans/{user_id}`).
     pub async fn unban(&self, guild_id: u64, user_id: u64) -> Result<(), MicupError> {
-        self.delete(&format!("/guilds/{guild_id}/bans/{user_id}")).await
+        self.delete(&format!("/guilds/{guild_id}/bans/{user_id}"))
+            .await
     }
 
     /// Kullanıcıya zaman aşımı / susturma uygular (Timeout: `PATCH /guilds/{id}/members/{user_id}`).
@@ -151,13 +248,29 @@ impl Client {
     }
 
     /// Üyeye rol verir (`PUT /guilds/{id}/members/{user_id}/roles/{role_id}`).
-    pub async fn add_role(&self, guild_id: u64, user_id: u64, role_id: u64) -> Result<(), MicupError> {
-        self.put_empty(&format!("/guilds/{guild_id}/members/{user_id}/roles/{role_id}")).await
+    pub async fn add_role(
+        &self,
+        guild_id: u64,
+        user_id: u64,
+        role_id: u64,
+    ) -> Result<(), MicupError> {
+        self.put_empty(&format!(
+            "/guilds/{guild_id}/members/{user_id}/roles/{role_id}"
+        ))
+        .await
     }
 
     /// Üyeden rol alır (`DELETE /guilds/{id}/members/{user_id}/roles/{role_id}`).
-    pub async fn remove_role(&self, guild_id: u64, user_id: u64, role_id: u64) -> Result<(), MicupError> {
-        self.delete(&format!("/guilds/{guild_id}/members/{user_id}/roles/{role_id}")).await
+    pub async fn remove_role(
+        &self,
+        guild_id: u64,
+        user_id: u64,
+        role_id: u64,
+    ) -> Result<(), MicupError> {
+        self.delete(&format!(
+            "/guilds/{guild_id}/members/{user_id}/roles/{role_id}"
+        ))
+        .await
     }
 
     // =========================================================================
@@ -171,7 +284,7 @@ impl Client {
         content: Option<&str>,
         embeds: Vec<Embed>,
         components: Vec<Component>,
-    ) -> Result<Value, MicupError> {
+    ) -> Result<Message, MicupError> {
         #[derive(Serialize)]
         struct Payload<'a> {
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -186,16 +299,109 @@ impl Client {
             embeds,
             components,
         };
-        self.post(&format!("/channels/{channel_id}/messages"), &p).await
+        self.post(&format!("/channels/{channel_id}/messages"), &p)
+            .await
+    }
+
+    /// Dosya ekleriyle birlikte mesaj gönderir (`multipart/form-data`).
+    pub async fn send_message_with_files(
+        &self,
+        channel_id: u64,
+        content: Option<&str>,
+        embeds: Vec<Embed>,
+        components: Vec<Component>,
+        files: Vec<(&str, Vec<u8>)>,
+    ) -> Result<Message, MicupError> {
+        let mut form = reqwest::multipart::Form::new();
+
+        #[derive(Serialize)]
+        struct Payload<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            content: Option<&'a str>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            embeds: Vec<Embed>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            components: Vec<Component>,
+        }
+
+        let p = Payload {
+            content,
+            embeds,
+            components,
+        };
+        let payload_json = serde_json::to_string(&p)?;
+        form = form.text("payload_json", payload_json);
+
+        for (i, (filename, bytes)) in files.into_iter().enumerate() {
+            let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string());
+            form = form.part(format!("files[{i}]"), part);
+        }
+
+        let url = format!("{}/channels/{channel_id}/messages", self.base_url);
+        let resp = self.http.post(&url).multipart(form).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// Mesaj detayını çeker (`GET /channels/{id}/messages/{message_id}`).
+    pub async fn get_message(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+    ) -> Result<Message, MicupError> {
+        self.get(&format!("/channels/{channel_id}/messages/{message_id}"))
+            .await
+    }
+
+    /// Kanaldaki son mesajları listeler (`GET /channels/{id}/messages?limit={limit}`).
+    pub async fn get_channel_messages(
+        &self,
+        channel_id: u64,
+        limit: Option<u64>,
+    ) -> Result<Vec<Message>, MicupError> {
+        let lim = limit.unwrap_or(50).min(100);
+        self.get(&format!("/channels/{channel_id}/messages?limit={lim}"))
+            .await
+    }
+
+    /// Mesajı düzenler (`PATCH /channels/{id}/messages/{message_id}`).
+    pub async fn edit_message(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        content: Option<&str>,
+        embeds: Vec<Embed>,
+        components: Vec<Component>,
+    ) -> Result<Message, MicupError> {
+        #[derive(Serialize)]
+        struct Payload<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            content: Option<&'a str>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            embeds: Vec<Embed>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            components: Vec<Component>,
+        }
+        let p = Payload {
+            content,
+            embeds,
+            components,
+        };
+        self.patch(&format!("/channels/{channel_id}/messages/{message_id}"), &p)
+            .await
     }
 
     /// Mesaj siler (`DELETE /channels/{id}/messages/{message_id}`).
     pub async fn delete_message(&self, channel_id: u64, message_id: u64) -> Result<(), MicupError> {
-        self.delete(&format!("/channels/{channel_id}/messages/{message_id}")).await
+        self.delete(&format!("/channels/{channel_id}/messages/{message_id}"))
+            .await
     }
 
     /// Toplu mesaj siler (Bulk delete: `POST /channels/{id}/messages/bulk-delete`).
-    pub async fn bulk_delete_messages(&self, channel_id: u64, message_ids: &[u64]) -> Result<(), MicupError> {
+    pub async fn bulk_delete_messages(
+        &self,
+        channel_id: u64,
+        message_ids: &[u64],
+    ) -> Result<(), MicupError> {
         #[derive(Serialize)]
         struct Payload<'a> {
             messages: &'a [Id],
@@ -211,12 +417,159 @@ impl Client {
     }
 
     // =========================================================================
+    // Tepkiler (Reactions)
+    // =========================================================================
+
+    /// Mesaja tepki ekler (`PUT /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`).
+    pub async fn create_reaction(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        emoji: &str,
+    ) -> Result<(), MicupError> {
+        let enc = url_encode(emoji);
+        self.put_empty(&format!(
+            "/channels/{channel_id}/messages/{message_id}/reactions/{enc}/@me"
+        ))
+        .await
+    }
+
+    /// Kendi tepkisini siler (`DELETE /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`).
+    pub async fn delete_own_reaction(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        emoji: &str,
+    ) -> Result<(), MicupError> {
+        let enc = url_encode(emoji);
+        self.delete(&format!(
+            "/channels/{channel_id}/messages/{message_id}/reactions/{enc}/@me"
+        ))
+        .await
+    }
+
+    /// Bir kullanıcının tepkisini siler (`DELETE /channels/{id}/messages/{message_id}/reactions/{emoji}/{user_id}`).
+    pub async fn delete_user_reaction(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        emoji: &str,
+        user_id: u64,
+    ) -> Result<(), MicupError> {
+        let enc = url_encode(emoji);
+        self.delete(&format!(
+            "/channels/{channel_id}/messages/{message_id}/reactions/{enc}/{user_id}"
+        ))
+        .await
+    }
+
+    /// Bir tepkiyi veren kullanıcıları listeler (`GET /channels/{id}/messages/{message_id}/reactions/{emoji}`).
+    pub async fn get_reactions(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        emoji: &str,
+        limit: Option<u64>,
+    ) -> Result<Vec<User>, MicupError> {
+        let enc = url_encode(emoji);
+        let lim = limit.unwrap_or(25).min(100);
+        self.get(&format!(
+            "/channels/{channel_id}/messages/{message_id}/reactions/{enc}?limit={lim}"
+        ))
+        .await
+    }
+
+    // =========================================================================
+    // Sabitleme (Pins)
+    // =========================================================================
+
+    /// Mesajı kanalda sabitler (`PUT /channels/{id}/pins/{message_id}`).
+    pub async fn pin_message(&self, channel_id: u64, message_id: u64) -> Result<(), MicupError> {
+        self.put_empty(&format!("/channels/{channel_id}/pins/{message_id}"))
+            .await
+    }
+
+    /// Sabitlenmiş mesajı kaldırır (`DELETE /channels/{id}/pins/{message_id}`).
+    pub async fn unpin_message(&self, channel_id: u64, message_id: u64) -> Result<(), MicupError> {
+        self.delete(&format!("/channels/{channel_id}/pins/{message_id}"))
+            .await
+    }
+
+    /// Sabitlenmiş mesajları listeler (`GET /channels/{id}/pins`).
+    pub async fn get_pinned_messages(&self, channel_id: u64) -> Result<Vec<Message>, MicupError> {
+        self.get(&format!("/channels/{channel_id}/pins")).await
+    }
+
+    // =========================================================================
+    // 3B Oda Sahnesi (3D Voice Room Stage)
+    // =========================================================================
+
+    /// Bir sesli kanalın 3B oda sahnesini getirir (`GET /channels/{id}/voice-room/stage`).
+    ///
+    /// Kanalda kimse yoksa veya sahne kurulmamışsa `Ok(None)` döner.
+    pub async fn get_voice_room_stage(
+        &self,
+        channel_id: u64,
+    ) -> Result<Option<VoiceRoomStage>, MicupError> {
+        let resp: VoiceRoomStageResponse = self
+            .get(&format!("/channels/{channel_id}/voice-room/stage"))
+            .await?;
+        Ok(resp.stage)
+    }
+
+    /// Bir sesli kanalın 3B oda sahnesini kurar veya günceller (`PUT /channels/{id}/voice-room/stage`).
+    ///
+    /// Bot odada NPC karakteri olarak görünür, TV panosu veya YouTube videosu gösterir.
+    pub async fn set_voice_room_stage(
+        &self,
+        channel_id: u64,
+        stage: &SetVoiceRoomStage,
+    ) -> Result<VoiceRoomStage, MicupError> {
+        self.put(&format!("/channels/{channel_id}/voice-room/stage"), stage)
+            .await
+    }
+
+    /// 3B oda sahnesini temizler / kaldırır (`DELETE /channels/{id}/voice-room/stage`).
+    pub async fn clear_voice_room_stage(&self, channel_id: u64) -> Result<(), MicupError> {
+        self.delete(&format!("/channels/{channel_id}/voice-room/stage"))
+            .await
+    }
+
+    /// 3B odadaki herkese tek seferlik efekt / an gönderir (`POST /channels/{id}/voice-room/stage/effects`).
+    ///
+    /// Konfeti, spot ışığı (`Spotlight`) veya sunucu karakter hareketi (`Wave`, `Dance`, `Jump`, `Emoji`).
+    pub async fn send_voice_room_effect(
+        &self,
+        channel_id: u64,
+        effect: &VoiceRoomEffect,
+    ) -> Result<(), MicupError> {
+        let url = format!(
+            "{}/channels/{channel_id}/voice-room/stage/effects",
+            self.base_url
+        );
+        let resp = self.http.post(&url).json(effect).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(MicupError::Api {
+                status,
+                message: body,
+            });
+        }
+        Ok(())
+    }
+
+    // =========================================================================
     // Slash Komutları (Application Commands)
     // =========================================================================
 
     /// Global slash komutlarını listeler (`GET /applications/{app_id}/commands`).
-    pub async fn get_global_commands(&self, application_id: u64) -> Result<Vec<crate::commands::Command>, MicupError> {
-        self.get(&format!("/applications/{application_id}/commands")).await
+    pub async fn get_global_commands(
+        &self,
+        application_id: u64,
+    ) -> Result<Vec<crate::commands::Command>, MicupError> {
+        self.get(&format!("/applications/{application_id}/commands"))
+            .await
     }
 
     /// Global slash komutlarını toplu olarak günceller / kaydeder (`PUT /applications/{app_id}/commands`).
@@ -225,7 +578,11 @@ impl Client {
         application_id: u64,
         commands: &[crate::commands::CreateCommand],
     ) -> Result<Vec<crate::commands::Command>, MicupError> {
-        self.put(&format!("/applications/{application_id}/commands"), &commands).await
+        self.put(
+            &format!("/applications/{application_id}/commands"),
+            &commands,
+        )
+        .await
     }
 
     /// Sunucuya özel slash komutlarını listeler (`GET /applications/{app_id}/guilds/{guild_id}/commands`).
@@ -234,7 +591,10 @@ impl Client {
         application_id: u64,
         guild_id: u64,
     ) -> Result<Vec<crate::commands::Command>, MicupError> {
-        self.get(&format!("/applications/{application_id}/guilds/{guild_id}/commands")).await
+        self.get(&format!(
+            "/applications/{application_id}/guilds/{guild_id}/commands"
+        ))
+        .await
     }
 
     /// Sunucuya özel slash komutlarını toplu günceller (`PUT /applications/{app_id}/guilds/{guild_id}/commands`).
@@ -270,7 +630,10 @@ impl Client {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(MicupError::Api { status, message: body });
+            return Err(MicupError::Api {
+                status,
+                message: body,
+            });
         }
         Ok(())
     }
@@ -294,9 +657,14 @@ impl Client {
     // =========================================================================
 
     /// Sunucu denetim kaydını çeker (`GET /guilds/{id}/audit-logs`).
-    pub async fn get_audit_logs(&self, guild_id: u64, limit: Option<u64>) -> Result<crate::models::AuditLog, MicupError> {
+    pub async fn get_audit_logs(
+        &self,
+        guild_id: u64,
+        limit: Option<u64>,
+    ) -> Result<crate::models::AuditLog, MicupError> {
         let lim = limit.unwrap_or(50);
-        self.get(&format!("/guilds/{guild_id}/audit-logs?limit={lim}")).await
+        self.get(&format!("/guilds/{guild_id}/audit-logs?limit={lim}"))
+            .await
     }
 
     /// Sunucudaki yasaklı kullanıcıları listeler (`GET /guilds/{id}/bans`).
@@ -305,7 +673,10 @@ impl Client {
     }
 
     /// Sunucudaki davetleri listeler (`GET /guilds/{id}/invites`).
-    pub async fn get_guild_invites(&self, guild_id: u64) -> Result<Vec<crate::models::Invite>, MicupError> {
+    pub async fn get_guild_invites(
+        &self,
+        guild_id: u64,
+    ) -> Result<Vec<crate::models::Invite>, MicupError> {
         self.get(&format!("/guilds/{guild_id}/invites")).await
     }
 
@@ -351,11 +722,19 @@ impl Client {
 
     async fn put_empty(&self, path: &str) -> Result<(), MicupError> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self.http.put(&url).header("Content-Length", 0).send().await?;
+        let resp = self
+            .http
+            .put(&url)
+            .header("Content-Length", 0)
+            .send()
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(MicupError::Api { status, message: body });
+            return Err(MicupError::Api {
+                status,
+                message: body,
+            });
         }
         Ok(())
     }
@@ -366,7 +745,10 @@ impl Client {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(MicupError::Api { status, message: body });
+            return Err(MicupError::Api {
+                status,
+                message: body,
+            });
         }
         Ok(())
     }
@@ -381,7 +763,10 @@ impl Client {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(MicupError::Api { status, message: body });
+            return Err(MicupError::Api {
+                status,
+                message: body,
+            });
         }
         Ok(())
     }

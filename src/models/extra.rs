@@ -1,6 +1,46 @@
 use serde::{Deserialize, Serialize};
 
+use crate::embed::Embed;
 use crate::models::{Id, User};
+
+/// Bir kanal mesajı. Micup'ın göndermediği alanlar varsayılan değerlere eşlenir.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Message {
+    pub id: Id,
+    #[serde(default)]
+    pub channel_id: Option<Id>,
+    #[serde(default)]
+    pub guild_id: Option<Id>,
+    #[serde(default)]
+    pub author: Option<User>,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub edited_timestamp: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub mention_everyone: bool,
+    #[serde(default)]
+    pub embeds: Vec<Embed>,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+    /// Bileşenler ham JSON olarak tutulur; gönderim için `Component` kullanın.
+    #[serde(default)]
+    pub components: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub reactions: Vec<Reaction>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Reaction {
+    pub count: u64,
+    #[serde(default)]
+    pub me: bool,
+    pub emoji: Emoji,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Attachment {

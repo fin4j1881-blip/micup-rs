@@ -1,5 +1,5 @@
-use std::env;
 use micup::prelude::*;
+use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -21,7 +21,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let channels = client.get_guild_channels(guild_id).await?;
     println!("Toplam Kanal: {}", channels.len());
     for c in channels.iter().take(3) {
-        println!("  #{} (id={}, type={})", c.name.as_deref().unwrap_or("-"), c.id, c.kind);
+        println!(
+            "  #{} (id={}, type={})",
+            c.name.as_deref().unwrap_or("-"),
+            c.id,
+            c.kind
+        );
     }
 
     let roles = client.get_guild_roles(guild_id).await?;
@@ -32,9 +37,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== 4. Sunucu Denetim Kaydı (Audit Log) ===");
     let audit = client.get_audit_logs(guild_id, Some(3)).await?;
-    println!("Son denetim girişi sayısı: {}", audit.audit_log_entries.len());
+    println!(
+        "Son denetim girişi sayısı: {}",
+        audit.audit_log_entries.len()
+    );
     for e in &audit.audit_log_entries {
-        println!("  İşlem ID: {}, Tip: {}, Sebep: {:?}", e.id, e.action_type, e.reason);
+        println!(
+            "  İşlem ID: {}, Tip: {}, Sebep: {:?}",
+            e.id, e.action_type, e.reason
+        );
     }
 
     println!("\n=== 5. Slash Komutları ===");
