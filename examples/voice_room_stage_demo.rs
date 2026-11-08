@@ -47,8 +47,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dance = VoiceRoomEffect::dance();
     println!("Dans Efekti JSON: {}", serde_json::to_string(&dance)?);
 
-    let emoji = VoiceRoomEffect::emoji("🎉");
-    println!("Emoji Efekti JSON: {}", serde_json::to_string(&emoji)?);
+    let emoji = VoiceRoomEffect::wave();
+    println!("El Sallama Efekti JSON: {}", serde_json::to_string(&emoji)?);
 
     println!("\n=== 4. İzin Bitleri Kontrolü ===");
     let perms = Permissions::new(
@@ -63,6 +63,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Permissions::bot_invite_url(1234567890, perms.0)
     );
 
-    println!("\n✅ Demo başarıyla tamamlandı.");
+    println!("\nDemo basariyla tamamlandi.");
     Ok(())
 }
