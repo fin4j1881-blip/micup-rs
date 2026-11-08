@@ -40,9 +40,9 @@ pub use embed::{Embed, EmbedField};
 pub use error::MicupError;
 pub use events::{
     Event, GuildMemberRemove, MessageDelete, MessageReactionAdd, MessageReactionRemove, ReadyEvent,
-    VoiceState,
+    VoiceServerUpdate, VoiceState,
 };
-pub use gateway::{GatewayPayload, GatewayPresence, Shard};
+pub use gateway::{GatewayPayload, GatewayPresence, Shard, ShardSender};
 pub use intents::Intents;
 pub use interaction::{
     CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
@@ -74,9 +74,9 @@ pub mod prelude {
     pub use crate::error::MicupError;
     pub use crate::events::{
         Event, GuildMemberRemove, MessageDelete, MessageReactionAdd, MessageReactionRemove,
-        ReadyEvent, VoiceState,
+        ReadyEvent, VoiceServerUpdate, VoiceState,
     };
-    pub use crate::gateway::{GatewayPresence, Shard};
+    pub use crate::gateway::{GatewayPresence, Shard, ShardSender};
     pub use crate::intents::Intents;
     pub use crate::interaction::{
         CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
@@ -237,6 +237,27 @@ mod tests {
                 assert_eq!(msg.content, "Merhaba Micup!");
             }
             _ => panic!("Beklenen MESSAGE_CREATE olayı gelmedi"),
+        }
+    }
+
+    #[test]
+    fn test_voice_server_update_parsing() {
+        let raw = serde_json::json!({
+            "token": "livekit_jwt_token_sample",
+            "endpoint": "wss://livekit.micup.gg",
+            "connection_id": "conn_123",
+            "channel_id": "1568369071631110144",
+            "guild_id": "1567986170364166147"
+        });
+
+        let event = Event::parse("VOICE_SERVER_UPDATE", raw);
+        match event {
+            Event::VoiceServerUpdate(vsu) => {
+                assert_eq!(vsu.token, "livekit_jwt_token_sample");
+                assert_eq!(vsu.endpoint, "wss://livekit.micup.gg");
+                assert_eq!(vsu.channel_id.get(), 1568369071631110144);
+            }
+            _ => panic!("VOICE_SERVER_UPDATE beklenen sekilde parse edilemedi"),
         }
     }
 }

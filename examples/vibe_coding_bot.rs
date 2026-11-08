@@ -48,7 +48,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = ctx.reply(&interaction, "Pong!").await;
         })
         .on_button("btn_ornek", |ctx, interaction| async move {
-            let _ = ctx.reply_ephemeral(&interaction, "Butona tikladiniz.").await;
+            let _ = ctx
+                .reply_ephemeral(&interaction, "Butona tikladiniz.")
+                .await;
         })
         .run()
         .await?;

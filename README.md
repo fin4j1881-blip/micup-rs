@@ -119,22 +119,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
    - Otomatik `Resume (op 6)` ve `session_id` / `last_seq` takibi ile kesintisiz yeniden bağlanma.
    - Heartbeat ACK takibi ile zombi bağlantı tespiti ve otomatik soket yenileme.
    - `Opcode 7 (Reconnect)` ve `Opcode 9 (Invalid Session)` akıllı kurtarma.
-   - Tür güvenli Gateway Olay Ayrıştırması (`shard.run_typed` & `Event` enum): `MessageCreate`, `InteractionCreate`, `VoiceStateUpdate` vb.
+   - Tür güvenli Gateway Olay Ayrıştırması (`shard.run_typed` & `Event` enum): `MessageCreate`, `InteractionCreate`, `VoiceStateUpdate`, `VoiceServerUpdate` vb.
 
-4. **Otomatik Hız Sınırı Koruması (429 Rate-Limit Retry):**
+4. **Ses ve Kamera Desteği (LiveKit & Opcode 4):**
+   - Botun ses kanalına bağlanması ve kamerasını açması (`self_video: true`).
+   - `ctx.join_voice(...)`, `ctx.set_camera(...)`, `ctx.leave_voice(...)` kısayolları.
+   - `Event::VoiceServerUpdate` ile Micup'tan LiveKit erişim adresi (`endpoint`) ve belirtecinin (`token`) otomatik alınması.
+
+5. **Otomatik Hız Sınırı Koruması (429 Rate-Limit Retry):**
    - API'den `429 Too Many Requests` yanıtı alındığında `Retry-After` süresi kadar asenkron bekleyip isteği otomatik olarak baştan dener (`with_max_retries`).
 
-5. **Doğru Medya CDN ve İmzalı Ek Dosya Kontrolü (`cdn.rs`):** 
+6. **Doğru Medya CDN ve İmzalı Ek Dosya Kontrolü (`cdn.rs`):** 
    - Standart kütüphaneler kırık `cdn.discordapp.com` linkleri üretir.
    - `micup-rs`, avatar, banner, sunucu ikonu, çıkartma ve emojileri doğrudan `https://media.micup.gg` üzerinden sağlar.
    - 6 varsayılan Micup avatarı (`0-5.png`) ve özel avatar formatları (`.png`, `.gif`).
    - İmzalı ek dosya bağlantılarının 24 saatlik geçerliliğini denetleyen `is_attachment_url_expired`.
 
-6. **Toleranslı Guild ve Model Çözümleme (`models.rs`):**
+7. **Toleranslı Guild ve Model Çözümleme (`models.rs`):**
    - Micup API'sinde `preferred_locale`, takviye çubuğu veya bazı opsiyonel alanlar `null` döner veya hiç gönderilmez.
    - `micup-rs`, bu alanları otomatik olarak varsayılan değerlere eşler.
 
-7. **Bileşen ve Embed Sanitasyonu:**
+8. **Bileşen ve Embed Sanitasyonu:**
    - Butonlarda `disabled: false` gönderilmesini engelleyerek API `Invalid form body` hatasını önler.
    - 1024 karakter embed alan sınırını ve boş alanları güvenli biçimde sanitasyon yapar.
    - Modallar ve Text Input (`ComponentType::TextInput`) bileşenleri tam desteklidir.

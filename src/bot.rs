@@ -168,10 +168,9 @@ impl Bot {
     /// Botu başlatır, REST Client ve Gateway bağlantısını kurup olay döngüsünü yürütür.
     pub async fn run(self) -> Result<(), MicupError> {
         let client = Arc::new(Client::new(&self.token)?);
-        let ctx = Context::new(Arc::clone(&client));
-
         let shard = Shard::new(&self.token, self.intents)
             .with_presence(self.presence_status.clone(), self.custom_status.clone());
+        let ctx = Context::new(Arc::clone(&client)).with_shard_sender(shard.sender());
 
         let bot_state = Arc::new(self);
 

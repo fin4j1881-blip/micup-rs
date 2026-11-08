@@ -74,6 +74,22 @@ pub struct GuildMemberRemove {
     pub user: User,
 }
 
+/// Ses sunucusu bağlantı izni olayı (`VOICE_SERVER_UPDATE`).
+///
+/// Bot ses kanalına katıldığında Micup bu olayla LiveKit sunucu adresini (`endpoint`)
+/// ve bağlantı anahtarını (`token`) bota iletir.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoiceServerUpdate {
+    pub token: String,
+    pub endpoint: String,
+    pub connection_id: String,
+    pub channel_id: Id,
+    #[serde(default)]
+    pub guild_id: Option<Id>,
+    #[serde(default)]
+    pub e2ee_key: Option<String>,
+}
+
 /// Ağ geçidi bağlantısı kurulduğunda gelen `READY` paketi.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadyEvent {
@@ -113,6 +129,7 @@ pub enum Event {
     ChannelUpdate(Channel),
     ChannelDelete(Channel),
     VoiceStateUpdate(VoiceState),
+    VoiceServerUpdate(VoiceServerUpdate),
     UserUpdate(User),
     /// Henüz özel olarak türleştirilmemiş veya platforma özgü diğer olaylar.
     Unknown {
@@ -246,6 +263,12 @@ impl Event {
                 }),
             "VOICE_STATE_UPDATE" => serde_json::from_value::<VoiceState>(data.clone())
                 .map(Event::VoiceStateUpdate)
+                .unwrap_or_else(|_| Event::Unknown {
+                    name: name.to_string(),
+                    data,
+                }),
+            "VOICE_SERVER_UPDATE" => serde_json::from_value::<VoiceServerUpdate>(data.clone())
+                .map(Event::VoiceServerUpdate)
                 .unwrap_or_else(|_| Event::Unknown {
                     name: name.to_string(),
                     data,

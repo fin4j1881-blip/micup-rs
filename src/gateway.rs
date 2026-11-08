@@ -1,18 +1,22 @@
 //! Micup Gateway (WebSocket) bağlantı yöneticisi ve olay döngüsü.
 //!
 //! Micup / Fluxer WebSocket ağ geçidine bağlanır, Hello/Identify/Resume akışını yönetir,
-//! zombi bağlantı kontrolüyle (Heartbeat ACK) kalp atışlarını sürdürür ve gelen olayları dinleyiciye aktarır.
+//! zombi bağlantı kontrolüyle (Heartbeat ACK) kalp atışlarını sürdürür, ses ve kamera durumlarını
+//! (Opcode 4 VoiceStateUpdate) yönetir ve gelen olayları dinleyiciye aktarır.
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
 
 use crate::error::MicupError;
 use crate::models::constants::GATEWAY_URL;
+use crate::models::Id;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GatewayPayload {
@@ -40,14 +44,85 @@ impl Default for GatewayPresence {
     }
 }
 
+/// Ses ve kamera durumu güncellemesi (`Opcode 4`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GatewayVoiceState {
+    pub guild_id: Id,
+    pub channel_id: Option<Id>,
+    pub self_mute: bool,
+    pub self_deaf: bool,
+    pub self_video: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum ShardCommand {
+    VoiceState(GatewayVoiceState),
+}
+
+/// Çalışan ağ geçidi bağlantısına dışarıdan komut (ses kanalına katılma, kamera açma vb.) gönderme kolu.
+#[derive(Clone)]
+pub struct ShardSender {
+    tx: mpsc::UnboundedSender<ShardCommand>,
+}
+
+impl ShardSender {
+    /// Bir ses kanalına katılır.
+    ///
+    /// `self_video: true` verilirse Micup'ta botun kamerası açılır.
+    pub fn join_voice_channel(
+        &self,
+        guild_id: u64,
+        channel_id: u64,
+        self_mute: bool,
+        self_deaf: bool,
+        self_video: bool,
+    ) -> Result<(), MicupError> {
+        self.tx
+            .send(ShardCommand::VoiceState(GatewayVoiceState {
+                guild_id: Id(guild_id),
+                channel_id: Some(Id(channel_id)),
+                self_mute,
+                self_deaf,
+                self_video,
+            }))
+            .map_err(|e| MicupError::Other(e.to_string()))
+    }
+
+    /// Ses kanalında kamera durumunu günceller.
+    pub fn set_camera(
+        &self,
+        guild_id: u64,
+        channel_id: u64,
+        enabled: bool,
+    ) -> Result<(), MicupError> {
+        self.join_voice_channel(guild_id, channel_id, false, false, enabled)
+    }
+
+    /// Ses kanalından ayrılır.
+    pub fn leave_voice_channel(&self, guild_id: u64) -> Result<(), MicupError> {
+        self.tx
+            .send(ShardCommand::VoiceState(GatewayVoiceState {
+                guild_id: Id(guild_id),
+                channel_id: None,
+                self_mute: false,
+                self_deaf: false,
+                self_video: false,
+            }))
+            .map_err(|e| MicupError::Other(e.to_string()))
+    }
+}
+
 pub struct Shard {
     token: String,
     intents: u64,
     presence: GatewayPresence,
+    cmd_tx: mpsc::UnboundedSender<ShardCommand>,
+    cmd_rx: Arc<Mutex<mpsc::UnboundedReceiver<ShardCommand>>>,
 }
 
 impl Shard {
     pub fn new(token: impl Into<String>, intents: u64) -> Self {
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         Self {
             token: token.into(),
             intents,
@@ -55,6 +130,15 @@ impl Shard {
                 status: "online".to_string(),
                 custom_status: None,
             },
+            cmd_tx,
+            cmd_rx: Arc::new(Mutex::new(cmd_rx)),
+        }
+    }
+
+    /// Çalışan ağ geçidi oturumuna komut gönderebilmek için bir `ShardSender` üretir.
+    pub fn sender(&self) -> ShardSender {
+        ShardSender {
+            tx: self.cmd_tx.clone(),
         }
     }
 
@@ -106,7 +190,10 @@ impl Shard {
                     stream
                 }
                 Err(e) => {
-                    error!(error = %e, "Gateway bağlantı hatası, 3 saniye sonra yeniden denenecek");
+                    error!(
+                        error = %e,
+                        "Gateway bağlantı hatası, 3 saniye sonra yeniden denenecek"
+                    );
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     continue;
                 }
@@ -186,8 +273,9 @@ impl Shard {
             }
 
             let mut ticker = tokio::time::interval(heartbeat_interval);
-            // İlk tick anında tetiklenir, bir kez atla
             ticker.tick().await;
+
+            let mut cmd_rx = self.cmd_rx.lock().await;
 
             loop {
                 tokio::select! {
@@ -204,6 +292,34 @@ impl Shard {
                         if let Err(e) = write.send(Message::Text(heartbeat.to_string())).await {
                             warn!(error = %e, "Kalp atışı gönderilemedi");
                             break;
+                        }
+                    }
+                    cmd = cmd_rx.recv() => {
+                        if let Some(cmd) = cmd {
+                            match cmd {
+                                ShardCommand::VoiceState(vs) => {
+                                    let payload = serde_json::json!({
+                                        "op": 4,
+                                        "d": {
+                                            "guild_id": vs.guild_id.to_string(),
+                                            "channel_id": vs.channel_id.map(|c| c.to_string()),
+                                            "self_mute": vs.self_mute,
+                                            "self_deaf": vs.self_deaf,
+                                            "self_video": vs.self_video,
+                                        }
+                                    });
+                                    if let Err(e) = write.send(Message::Text(payload.to_string())).await {
+                                        warn!(error = %e, "Ses durumu (VoiceStateUpdate) gönderilemedi");
+                                    } else {
+                                        debug!(
+                                            guild_id = %vs.guild_id,
+                                            channel_id = ?vs.channel_id,
+                                            self_video = vs.self_video,
+                                            "VoiceStateUpdate (Opcode 4) gönderildi"
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                     msg = read.next() => {
@@ -229,7 +345,6 @@ impl Shard {
                                             }
                                         }
                                         1 => {
-                                            // Ağ geçidinin talebi üzerine anlık Heartbeat yanıtı
                                             let hb = serde_json::json!({ "op": 1, "d": last_seq });
                                             let _ = write.send(Message::Text(hb.to_string())).await;
                                         }
