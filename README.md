@@ -23,17 +23,22 @@ Standart Discord kütüphaneleri (Serenity, Twilight vb.) Micup üzerinde kullan
    - Heartbeat ACK takibi ile zombi bağlantı tespiti ve otomatik soket yenileme.
    - `Opcode 7 (Reconnect)` ve `Opcode 9 (Invalid Session)` akıllı kurtarma.
    - Bot durum metni (`Custom Status`) ve presence desteği (`with_presence`).
+   - Tür güvenli Gateway Olay Ayrıştırması (`shard.run_typed` & `Event` enum): `MessageCreate`, `InteractionCreate`, `VoiceStateUpdate` vb.
 
-4. **Doğru Medya CDN URL'leri (`cdn.rs`):** 
+4. **Otomatik Hız Sınırı Koruması (429 Rate-Limit Retry):**
+   - API'den `429 Too Many Requests` yanıtı alındığında `Retry-After` süresi kadar asenkron bekleyip isteği otomatik olarak baştan dener (`with_max_retries`).
+
+5. **Doğru Medya CDN & İmzalı Ek Dosya Kontrolü (`cdn.rs`):** 
    - Standart kütüphaneler kırık `cdn.discordapp.com` linkleri üretir.
    - `micup-rs`, avatar, banner, sunucu ikonu, çıkartma ve emojileri doğrudan `https://media.micup.gg` üzerinden sağlar.
    - 6 varsayılan Micup avatarı (`0-5.png`) ve özel avatar formatları (`.png`, `.gif`).
+   - İmzalı ek dosya bağlantılarının 24 saatlik geçerliliğini denetleyen `is_attachment_url_expired`.
 
-5. **Toleranslı Guild & Model Çözümleme (`models.rs`):**
+6. **Toleranslı Guild & Model Çözümleme (`models.rs`):**
    - Micup API'sinde `preferred_locale`, takviye çubuğu veya bazı opsiyonel alanlar `null` döner veya hiç gönderilmez.
    - `micup-rs`, bu alanları otomatik olarak varsayılan değerlere eşler.
 
-6. **Bileşen & Embed Sanitasyonu:**
+7. **Bileşen & Embed Sanitasyonu:**
    - Butonlarda `disabled: false` gönderilmesini engelleyerek API `Invalid form body` hatasını önler.
    - 1024 karakter embed alan sınırını ve boş alanları güvenli biçimde sanitasyon yapar.
    - Modallar ve Text Input (`ComponentType::TextInput`) bileşenleri tam desteklidir.
@@ -45,6 +50,9 @@ Standart Discord kütüphaneleri (Serenity, Twilight vb.) Micup üzerinde kullan
 - **3B Oda Sahnesi:** `get_voice_room_stage()`, `set_voice_room_stage()`, `clear_voice_room_stage()`, `send_voice_room_effect()`
 - **Keşif & Gateway:** `get_discovery()` (`/.well-known/fluxer`), `get_gateway_bot()` (`/gateway/bot`)
 - **Mesajlar:** `send_message()`, `send_message_with_files()`, `get_message()`, `get_channel_messages()`, `edit_message()`, `delete_message()`, `bulk_delete_messages()`
+- **Webhook'lar:** `execute_webhook()`, `get_channel_webhooks()`, `create_webhook()`, `delete_webhook()`
+- **Kanallar & Roller:** `get_channel()`, `delete_channel()`, `create_channel_invite()`, `create_role()`, `delete_role()`
+- **Emojiler:** `get_guild_emojis()`, `get_guild_emoji()`, `delete_guild_emoji()`
 - **Tepkiler (Reactions):** `create_reaction()`, `delete_own_reaction()`, `delete_user_reaction()`, `get_reactions()`
 - **Sabitleme (Pins):** `pin_message()`, `unpin_message()`, `get_pinned_messages()`
 - **Kullanıcılar & Profil:** `current_user()`, `get_user()`, `edit_current_user()`
@@ -92,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-## 🛠️ Örnek Kullanım: Otomatik Yeniden Bağlanan Gateway
+## 🛠️ Örnek Kullanım: Tür Güvenli Gateway Olay Döngüsü
 
 ```rust
 use micup::prelude::*;
@@ -101,18 +109,22 @@ use micup::prelude::*;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = "MICUP_BOT_TOKEN";
     let shard = Shard::new(token, 513) // Guilds (1) | GuildMessages (512)
-        .with_presence("online", Some("micup-rs ile çalışıyor"));
+        .with_presence("online", Some("micup-rs v0.3.0"));
 
-    shard.run(|event_name, data| async move {
-        match event_name.as_str() {
-            "READY" => {
-                println!("Bot bağlandı! Kullanıcı: {:?}", data["user"]["username"]);
+    // Olaylar otomatik olarak tür güvenli Event enum'una dönüştürülür
+    shard.run_typed(|event| async move {
+        match event {
+            Event::Ready(ready) => {
+                println!("Bot bağlandı! Kullanıcı: {} (ID: {})", ready.user.username, ready.user.id);
             }
-            "MESSAGE_CREATE" => {
-                println!("Yeni mesaj: {:?}", data["content"]);
+            Event::MessageCreate(msg) => {
+                println!("[#{:?}] {}: {}", msg.channel_id, msg.author.map(|u| u.username).unwrap_or_default(), msg.content);
             }
-            "INTERACTION_CREATE" => {
-                println!("Yeni etkileşim alındı!");
+            Event::InteractionCreate(interaction) => {
+                println!("Yeni etkileşim alındı (ID: {})", interaction.id);
+            }
+            Event::VoiceStateUpdate(voice) => {
+                println!("Ses durumu güncellendi: kullanıcı {}", voice.user_id);
             }
             _ => {}
         }

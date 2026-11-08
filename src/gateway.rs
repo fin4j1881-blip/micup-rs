@@ -71,6 +71,19 @@ impl Shard {
         self
     }
 
+    /// Gelen olayları tür güvenli `Event` enum nesnesi olarak dinleyiciye aktarır.
+    pub async fn run_typed<F, Fut>(&self, mut on_event: F) -> Result<(), MicupError>
+    where
+        F: FnMut(crate::events::Event) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        self.run(|name, data| {
+            let event = crate::events::Event::parse(&name, data);
+            on_event(event)
+        })
+        .await
+    }
+
     /// Gateway'e bağlanır, Identify/Resume gönderir, kalp atışlarını yönetir,
     /// bağlantı koparsa otomatik olarak Resume ile yeniden bağlanır.
     pub async fn run<F, Fut>(&self, mut on_event: F) -> Result<(), MicupError>

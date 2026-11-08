@@ -70,3 +70,21 @@ pub fn sticker_url(sticker_id: u64) -> String {
 pub fn branding_url(category: u64, hash: &str) -> String {
     format!("{CDN_BASE}/branding/{category}/{hash}.png")
 }
+
+/// İmzalı ek dosya bağlantısının süresinin dolup dolmadığını denetler (`ex` parametresi).
+///
+/// Micup ve Fluxer platformunda ek dosya bağlantıları 24 saat sonra zaman aşımına uğrar.
+pub fn is_attachment_url_expired(url: &str) -> bool {
+    if let Some(pos) = url.find("ex=") {
+        let after = &url[pos + 3..];
+        let hex_str = after.split('&').next().unwrap_or(after);
+        if let Ok(ts) = u64::from_str_radix(hex_str, 16) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            return now >= ts;
+        }
+    }
+    false
+}

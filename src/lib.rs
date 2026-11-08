@@ -7,6 +7,7 @@
 //! - Boş buton veya menü dizilerinde API `Invalid form body` hatası verir.
 //! - Embed alanlarında 1024 karakter ve 256 başlık sınırı manuel yönetilmezse hata alınır.
 //! - 3B Oda Sahnesi (`voice-room/stage`) ve `MANAGE_ROOM_STAGE` (`1 << 62`) gibi Micup'a özgü sistemleri tanımazlar.
+//! - Gateway olaylarında tür güvenli `Event` enum ayrıştırması ve otomatik 429 backoff desteği sunulmaz.
 //!
 //! `micup-rs`, tüm bu platform uyumsuzluklarını ve özel sistemleri dahili olarak çözer.
 
@@ -16,6 +17,7 @@ pub mod commands;
 pub mod components;
 pub mod embed;
 pub mod error;
+pub mod events;
 pub mod gateway;
 pub mod interaction;
 pub mod models;
@@ -29,6 +31,10 @@ pub use commands::{
 pub use components::{ButtonStyle, Component, ComponentType, SelectOption, TextInputStyle};
 pub use embed::{Embed, EmbedField};
 pub use error::MicupError;
+pub use events::{
+    Event, GuildMemberRemove, MessageDelete, MessageReactionAdd, MessageReactionRemove, ReadyEvent,
+    VoiceState,
+};
 pub use gateway::{GatewayPayload, GatewayPresence, Shard};
 pub use interaction::{
     CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
@@ -56,6 +62,10 @@ pub mod prelude {
     };
     pub use crate::embed::Embed;
     pub use crate::error::MicupError;
+    pub use crate::events::{
+        Event, GuildMemberRemove, MessageDelete, MessageReactionAdd, MessageReactionRemove,
+        ReadyEvent, VoiceState,
+    };
     pub use crate::gateway::{GatewayPresence, Shard};
     pub use crate::interaction::{
         CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
@@ -98,6 +108,15 @@ mod tests {
 
         let sticker = cdn::sticker_url(11223344);
         assert_eq!(sticker, "https://media.micup.gg/stickers/11223344.png");
+
+        // Zaman aşımı testi
+        let future_url =
+            "https://media.micup.gg/attachments/1/2/file.png?ex=ffffffff&is=123&hm=abc";
+        assert!(!cdn::is_attachment_url_expired(future_url));
+
+        let expired_url =
+            "https://media.micup.gg/attachments/1/2/file.png?ex=00000001&is=123&hm=abc";
+        assert!(cdn::is_attachment_url_expired(expired_url));
     }
 
     #[test]
@@ -168,5 +187,25 @@ mod tests {
         perms.insert(Permissions::MANAGE_ROOM_STAGE);
         assert!(perms.can_manage_stage());
         assert_eq!(Permissions::MANAGE_ROOM_STAGE, 1u64 << 62);
+    }
+
+    #[test]
+    fn test_typed_event_parsing() {
+        let raw = serde_json::json!({
+            "id": "123456789",
+            "channel_id": "987654321",
+            "content": "Merhaba Micup!",
+            "pinned": false,
+            "mention_everyone": false
+        });
+
+        let event = Event::parse("MESSAGE_CREATE", raw);
+        match event {
+            Event::MessageCreate(msg) => {
+                assert_eq!(msg.id.get(), 123456789);
+                assert_eq!(msg.content, "Merhaba Micup!");
+            }
+            _ => panic!("Beklenen MESSAGE_CREATE olayı gelmedi"),
+        }
     }
 }

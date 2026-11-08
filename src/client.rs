@@ -8,7 +8,8 @@ use crate::embed::Embed;
 use crate::error::MicupError;
 use crate::models::constants::API_BASE;
 use crate::models::{
-    Channel, FluxerDiscovery, GatewayBotInfo, Guild, Id, Member, Message, Role, User,
+    Channel, Emoji, FluxerDiscovery, GatewayBotInfo, Guild, Id, Invite, Member, Message, Role,
+    User, Webhook,
 };
 use crate::stage::{SetVoiceRoomStage, VoiceRoomEffect, VoiceRoomStage, VoiceRoomStageResponse};
 
@@ -30,6 +31,7 @@ pub struct Client {
     token: String,
     http: reqwest::Client,
     base_url: String,
+    max_retries: u32,
 }
 
 impl Client {
@@ -41,7 +43,7 @@ impl Client {
             AUTHORIZATION,
             HeaderValue::from_str(&auth_val).map_err(|e| MicupError::Other(e.to_string()))?,
         );
-        headers.insert(USER_AGENT, HeaderValue::from_static("micup-rs/0.1.0"));
+        headers.insert(USER_AGENT, HeaderValue::from_static("micup-rs/0.2.0"));
 
         let http = reqwest::Client::builder()
             .default_headers(headers)
@@ -52,7 +54,14 @@ impl Client {
             token,
             http,
             base_url: API_BASE.to_string(),
+            max_retries: 3,
         })
+    }
+
+    /// Hız sınırı (429 Rate Limit) durumunda otomatik tekrar deneme sayısını ayarlar.
+    pub fn with_max_retries(mut self, retries: u32) -> Self {
+        self.max_retries = retries;
+        self
     }
 
     pub fn token(&self) -> &str {
@@ -122,7 +131,7 @@ impl Client {
     }
 
     // =========================================================================
-    // Sunucular (Guilds)
+    // Sunucular (Guilds) ve Kanallar
     // =========================================================================
 
     /// Bir sunucunun detaylı bilgilerini çeker (`GET /guilds/{id}`).
@@ -135,9 +144,38 @@ impl Client {
         self.get(&format!("/guilds/{guild_id}/channels")).await
     }
 
-    /// Sunucudaki rolleri listeler (`GET /guilds/{id}/roles`).
-    pub async fn get_guild_roles(&self, guild_id: u64) -> Result<Vec<Role>, MicupError> {
-        self.get(&format!("/guilds/{guild_id}/roles")).await
+    /// Belirtilen kanalı getirir (`GET /channels/{id}`).
+    pub async fn get_channel(&self, channel_id: u64) -> Result<Channel, MicupError> {
+        self.get(&format!("/channels/{channel_id}")).await
+    }
+
+    /// Kanalı siler (`DELETE /channels/{id}`).
+    pub async fn delete_channel(&self, channel_id: u64) -> Result<Channel, MicupError> {
+        self.delete_json(&format!("/channels/{channel_id}")).await
+    }
+
+    /// Kanala özel davet oluşturur (`POST /channels/{id}/invites`).
+    pub async fn create_channel_invite(
+        &self,
+        channel_id: u64,
+        max_age_seconds: Option<u64>,
+        max_uses: Option<u64>,
+    ) -> Result<Invite, MicupError> {
+        #[derive(Serialize)]
+        struct InvitePayload {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            max_age: Option<u64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            max_uses: Option<u64>,
+        }
+        self.post(
+            &format!("/channels/{channel_id}/invites"),
+            &InvitePayload {
+                max_age: max_age_seconds,
+                max_uses,
+            },
+        )
+        .await
     }
 
     /// Yeni kanal oluşturur (`POST /guilds/{id}/channels`).
@@ -162,6 +200,71 @@ impl Client {
             parent_id: parent_id.map(Id),
         };
         self.post(&format!("/guilds/{guild_id}/channels"), &p).await
+    }
+
+    // =========================================================================
+    // Roller (Roles)
+    // =========================================================================
+
+    /// Sunucudaki rolleri listeler (`GET /guilds/{id}/roles`).
+    pub async fn get_guild_roles(&self, guild_id: u64) -> Result<Vec<Role>, MicupError> {
+        self.get(&format!("/guilds/{guild_id}/roles")).await
+    }
+
+    /// Sunucuda yeni rol oluşturur (`POST /guilds/{id}/roles`).
+    pub async fn create_role(
+        &self,
+        guild_id: u64,
+        name: &str,
+        color: Option<u64>,
+        hoist: bool,
+        mentionable: bool,
+    ) -> Result<Role, MicupError> {
+        #[derive(Serialize)]
+        struct CreateRolePayload<'a> {
+            name: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            color: Option<u64>,
+            hoist: bool,
+            mentionable: bool,
+        }
+        self.post(
+            &format!("/guilds/{guild_id}/roles"),
+            &CreateRolePayload {
+                name,
+                color,
+                hoist,
+                mentionable,
+            },
+        )
+        .await
+    }
+
+    /// Sunucudan rol siler (`DELETE /guilds/{id}/roles/{role_id}`).
+    pub async fn delete_role(&self, guild_id: u64, role_id: u64) -> Result<(), MicupError> {
+        self.delete(&format!("/guilds/{guild_id}/roles/{role_id}"))
+            .await
+    }
+
+    // =========================================================================
+    // Emojiler (Emojis)
+    // =========================================================================
+
+    /// Sunucu emojilerini listeler (`GET /guilds/{id}/emojis`).
+    pub async fn get_guild_emojis(&self, guild_id: u64) -> Result<Vec<Emoji>, MicupError> {
+        self.get(&format!("/guilds/{guild_id}/emojis")).await
+    }
+
+    /// Sunucudan belirli bir emojiyi çeker (`GET /guilds/{id}/emojis/{emoji_id}`).
+    pub async fn get_guild_emoji(&self, guild_id: u64, emoji_id: u64) -> Result<Emoji, MicupError> {
+        self.get(&format!("/guilds/{guild_id}/emojis/{emoji_id}"))
+            .await
+    }
+
+    /// Sunucudan emoji siler (`DELETE /guilds/{id}/emojis/{emoji_id}`).
+    pub async fn delete_guild_emoji(&self, guild_id: u64, emoji_id: u64) -> Result<(), MicupError> {
+        self.delete(&format!("/guilds/{guild_id}/emojis/{emoji_id}"))
+            .await
     }
 
     // =========================================================================
@@ -414,6 +517,75 @@ impl Client {
             )
             .await?;
         Ok(())
+    }
+
+    // =========================================================================
+    // Webhook İşlemleri
+    // =========================================================================
+
+    /// Webhook üzerinden mesaj gönderir (`POST /webhooks/{id}/{token}`).
+    pub async fn execute_webhook(
+        &self,
+        webhook_id: u64,
+        webhook_token: &str,
+        content: Option<&str>,
+        embeds: Vec<Embed>,
+        components: Vec<Component>,
+        wait: bool,
+    ) -> Result<Option<Message>, MicupError> {
+        #[derive(Serialize)]
+        struct Payload<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            content: Option<&'a str>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            embeds: Vec<Embed>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            components: Vec<Component>,
+        }
+        let p = Payload {
+            content,
+            embeds,
+            components,
+        };
+        let wait_param = if wait { "?wait=true" } else { "" };
+        let url = format!("/webhooks/{webhook_id}/{webhook_token}{wait_param}");
+        if wait {
+            let msg: Message = self.post(&url, &p).await?;
+            Ok(Some(msg))
+        } else {
+            let _: Value = self.post(&url, &p).await?;
+            Ok(None)
+        }
+    }
+
+    /// Belirtilen kanaldaki webhook'ları çeker (`GET /channels/{id}/webhooks`).
+    pub async fn get_channel_webhooks(&self, channel_id: u64) -> Result<Vec<Webhook>, MicupError> {
+        self.get(&format!("/channels/{channel_id}/webhooks")).await
+    }
+
+    /// Yeni bir webhook oluşturur (`POST /channels/{id}/webhooks`).
+    pub async fn create_webhook(
+        &self,
+        channel_id: u64,
+        name: &str,
+        avatar: Option<&str>,
+    ) -> Result<Webhook, MicupError> {
+        #[derive(Serialize)]
+        struct CreateWebhookPayload<'a> {
+            name: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            avatar: Option<&'a str>,
+        }
+        self.post(
+            &format!("/channels/{channel_id}/webhooks"),
+            &CreateWebhookPayload { name, avatar },
+        )
+        .await
+    }
+
+    /// Bir webhook'u siler (`DELETE /webhooks/{id}`).
+    pub async fn delete_webhook(&self, webhook_id: u64) -> Result<(), MicupError> {
+        self.delete(&format!("/webhooks/{webhook_id}")).await
     }
 
     // =========================================================================
@@ -681,12 +853,12 @@ impl Client {
     }
 
     // =========================================================================
-    // Dahili HTTP yardımcıları
+    // Dahili HTTP yardımcıları (429 Hız Sınırı Korumalı)
     // =========================================================================
 
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, MicupError> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self.http.get(&url).send().await?;
+        let resp = self.execute_with_retry(|| self.http.get(&url)).await?;
         Self::handle_response(resp).await
     }
 
@@ -696,7 +868,9 @@ impl Client {
         payload: &P,
     ) -> Result<T, MicupError> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self.http.post(&url).json(payload).send().await?;
+        let resp = self
+            .execute_with_retry(|| self.http.post(&url).json(payload))
+            .await?;
         Self::handle_response(resp).await
     }
 
@@ -706,7 +880,9 @@ impl Client {
         payload: &P,
     ) -> Result<T, MicupError> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self.http.patch(&url).json(payload).send().await?;
+        let resp = self
+            .execute_with_retry(|| self.http.patch(&url).json(payload))
+            .await?;
         Self::handle_response(resp).await
     }
 
@@ -716,17 +892,16 @@ impl Client {
         payload: &P,
     ) -> Result<T, MicupError> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self.http.put(&url).json(payload).send().await?;
+        let resp = self
+            .execute_with_retry(|| self.http.put(&url).json(payload))
+            .await?;
         Self::handle_response(resp).await
     }
 
     async fn put_empty(&self, path: &str) -> Result<(), MicupError> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .http
-            .put(&url)
-            .header("Content-Length", 0)
-            .send()
+            .execute_with_retry(|| self.http.put(&url).header("Content-Length", 0))
             .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
@@ -741,7 +916,7 @@ impl Client {
 
     async fn delete(&self, path: &str) -> Result<(), MicupError> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self.http.delete(&url).send().await?;
+        let resp = self.execute_with_retry(|| self.http.delete(&url)).await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -753,13 +928,26 @@ impl Client {
         Ok(())
     }
 
+    async fn delete_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<T, MicupError> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self.execute_with_retry(|| self.http.delete(&url)).await?;
+        Self::handle_response(resp).await
+    }
+
     async fn delete_with_reason(&self, path: &str, reason: Option<&str>) -> Result<(), MicupError> {
         let url = format!("{}{}", self.base_url, path);
-        let mut req = self.http.delete(&url);
-        if let Some(r) = reason {
-            req = req.header("X-Audit-Log-Reason", r);
-        }
-        let resp = req.send().await?;
+        let resp = self
+            .execute_with_retry(|| {
+                let mut req = self.http.delete(&url);
+                if let Some(r) = reason {
+                    req = req.header("X-Audit-Log-Reason", r);
+                }
+                req
+            })
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -769,6 +957,34 @@ impl Client {
             });
         }
         Ok(())
+    }
+
+    async fn execute_with_retry<F>(&self, make_req: F) -> Result<reqwest::Response, MicupError>
+    where
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        let mut retries = 0;
+        loop {
+            let resp = make_req().send().await?;
+            let status = resp.status();
+            if status.as_u16() == 429 && retries < self.max_retries {
+                let wait_secs = resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(1.0);
+                let duration = Duration::from_millis((wait_secs * 1000.0).ceil() as u64);
+                tracing::warn!(
+                    retry_after_secs = wait_secs,
+                    "Micup API 429 Hız Sınırı: bekleniyor ve tekrar denenecek..."
+                );
+                tokio::time::sleep(duration).await;
+                retries += 1;
+                continue;
+            }
+            return Ok(resp);
+        }
     }
 
     async fn handle_response<T: serde::de::DeserializeOwned>(
