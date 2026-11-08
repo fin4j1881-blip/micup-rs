@@ -1,6 +1,6 @@
 [package]
 name = "micup"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Kerem <kerem4444xerer@gmail.com>"]
 description = "Micup.gg / Fluxer botları için resmi olmayan, Micup API ve CDN uyumlu Rust kütüphanesi"

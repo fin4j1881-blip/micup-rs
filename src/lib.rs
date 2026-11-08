@@ -11,24 +11,31 @@
 //!
 //! `micup-rs`, tüm bu platform uyumsuzluklarını ve özel sistemleri dahili olarak çözer.
 
+pub mod bot;
 pub mod cdn;
 pub mod client;
 pub mod commands;
 pub mod components;
+pub mod context;
 pub mod embed;
 pub mod error;
 pub mod events;
 pub mod gateway;
+pub mod intents;
 pub mod interaction;
+#[macro_use]
+pub mod macros;
 pub mod models;
 pub mod permissions;
 pub mod stage;
 
+pub use bot::{Bot, BoxFuture, EventHandler};
 pub use client::Client;
 pub use commands::{
     Command, CommandOption, CommandOptionChoice, CommandOptionType, CommandType, CreateCommand,
 };
 pub use components::{ButtonStyle, Component, ComponentType, SelectOption, TextInputStyle};
+pub use context::Context;
 pub use embed::{Embed, EmbedField};
 pub use error::MicupError;
 pub use events::{
@@ -36,6 +43,7 @@ pub use events::{
     VoiceState,
 };
 pub use gateway::{GatewayPayload, GatewayPresence, Shard};
+pub use intents::Intents;
 pub use interaction::{
     CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
     InteractionResponseData, InteractionResponseMessage, InteractionResponseType, InteractionType,
@@ -52,6 +60,7 @@ pub use stage::{
 };
 
 pub mod prelude {
+    pub use crate::bot::{Bot, BoxFuture, EventHandler};
     pub use crate::cdn;
     pub use crate::client::Client;
     pub use crate::commands::{
@@ -60,6 +69,7 @@ pub mod prelude {
     pub use crate::components::{
         ButtonStyle, Component, ComponentType, SelectOption, TextInputStyle,
     };
+    pub use crate::context::Context;
     pub use crate::embed::Embed;
     pub use crate::error::MicupError;
     pub use crate::events::{
@@ -67,6 +77,7 @@ pub mod prelude {
         ReadyEvent, VoiceState,
     };
     pub use crate::gateway::{GatewayPresence, Shard};
+    pub use crate::intents::Intents;
     pub use crate::interaction::{
         CommandInteractionDataOption, Interaction, InteractionData, InteractionResponse,
         InteractionResponseMessage, InteractionResponseType, InteractionType,
@@ -80,6 +91,7 @@ pub mod prelude {
         BoardStyle, ScoreboardEntry, SetVoiceRoomStage, StageBoard, StageHost, StageTv, StageVideo,
         VoiceRoomEffect, VoiceRoomStage,
     };
+    pub use crate::{button, embed};
 }
 
 #[cfg(test)]
@@ -109,7 +121,6 @@ mod tests {
         let sticker = cdn::sticker_url(11223344);
         assert_eq!(sticker, "https://media.micup.gg/stickers/11223344.png");
 
-        // Zaman aşımı testi
         let future_url =
             "https://media.micup.gg/attachments/1/2/file.png?ex=ffffffff&is=123&hm=abc";
         assert!(!cdn::is_attachment_url_expired(future_url));
@@ -117,6 +128,27 @@ mod tests {
         let expired_url =
             "https://media.micup.gg/attachments/1/2/file.png?ex=00000001&is=123&hm=abc";
         assert!(cdn::is_attachment_url_expired(expired_url));
+    }
+
+    #[test]
+    fn test_macros() {
+        let e = embed! {
+            title: "Test Başlığı",
+            description: "Açıklama",
+            color: 0x7c5cff,
+            fields: [
+                ("Alan 1", "Değer 1", true),
+                ("Alan 2", "Değer 2", false),
+            ],
+        };
+        assert_eq!(e.title.as_deref(), Some("Test Başlığı"));
+        assert_eq!(e.color, Some(0x7c5cff));
+        assert_eq!(e.fields.len(), 2);
+
+        let b = button!("Onayla", "btn_ok", Success);
+        let json = serde_json::to_value(&b).unwrap();
+        assert_eq!(json["label"], "Onayla");
+        assert_eq!(json["custom_id"], "btn_ok");
     }
 
     #[test]
@@ -133,7 +165,6 @@ mod tests {
     fn test_button_serialization_skips_disabled_false() {
         let btn = Component::button(ButtonStyle::Primary, "Test", "custom_1");
         let json = serde_json::to_value(&btn).unwrap();
-        // Micup Fluxer: disabled false ise JSON içinde yer almamalıdır!
         assert!(json.get("disabled").is_none());
     }
 

@@ -2,17 +2,114 @@
 
 Micup.gg / Fluxer platformu için resmi olmayan, Micup API ve CDN mimarisine özel geliştirilmiş modern, asenkron ve eksiksiz Rust kütüphanesi.
 
-Standart Discord kütüphaneleri (Serenity, Twilight vb.) Micup üzerinde kullanılırken yaşanan yapısal uyumsuzlukları dahili olarak çözer ve **Micup'a özgü 3B Oda Sahnesi (Voice Room Stage)** gibi sistemleri birinci sınıf destekler.
+Hem **hızlı geliştirme (vibe coding)** yapanlar için tek satırda çalışan fonksiyon zincirleri ve makrolar (`embed!`, `button!`), hem de **yapısal mimari (hand-crafted code)** kuranlar için `EventHandler` trait'i, tür güvenli olaylar (`Event`), zengin `Context` ve granular REST/Gateway API'si sunar.
+
+---
+
+## ⚡ 1. Vibe Coding: 30 Saniyede Sıfır Boilerplate Bot
+
+Kodlama yaparken veya yapay zekaya kod yazdırırken karmaşık şablonlarla uğraşmanıza gerek yok. Tek bir zincirle botunuz hazır:
+
+```rust
+use micup::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Bot::from_token("MICUP_BOT_TOKEN")
+        .with_presence("online", "micup-rs ile aktif 🚀")
+        .on_ready(|_, ready| async move {
+            println!("✅ Bot bağlandı: {}", ready.user.username);
+        })
+        .on_message(|ctx, msg| async move {
+            if msg.content == "!ping" {
+                if let Some(ch) = msg.channel_id {
+                    let _ = ctx.say(ch.get(), "Pong! 🏓").await;
+                }
+            } else if msg.content == "!yardim" {
+                if let Some(ch) = msg.channel_id {
+                    let e = embed! {
+                        title: "Yardım Menüsü",
+                        description: "micup-rs ile bot yazmak artık çok kolay!",
+                        color: 0x7c5cff,
+                        fields: [
+                            ("!ping", "Gecikme testi", true),
+                            ("!sahne", "3B ses odasına TV panosu kurar", true),
+                        ],
+                    };
+                    let _ = ctx.send_embed(ch.get(), e).await;
+                }
+            }
+        })
+        .on_command("ping", |ctx, i| async move {
+            let _ = ctx.reply(&i, "Pong! 🏓").await;
+        })
+        .on_button("btn_ornek", |ctx, i| async move {
+            let _ = ctx.reply_ephemeral(&i, "Butona tıkladınız!").await;
+        })
+        .run()
+        .await?;
+
+    Ok(())
+}
+```
+
+---
+
+## 🏛️ 2. Yapısal & Modüler Mimari (`EventHandler` Trait)
+
+Büyük ve sürdürülebilir kurumsal projeler için `EventHandler` trait'i ile modüler mimari:
+
+```rust
+use micup::prelude::*;
+
+struct MyBot;
+
+impl EventHandler for MyBot {
+    fn on_ready<'a>(&'a self, _ctx: Context, ready: ReadyEvent) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            println!("Bot çevrimiçi: {} (Oturum: {})", ready.user.username, ready.session_id);
+        })
+    }
+
+    fn on_message<'a>(&'a self, ctx: Context, msg: Message) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            if msg.content == "!selam" {
+                if let Some(ch) = msg.channel_id {
+                    let _ = ctx.say(ch.get(), "Aleyküm selam!").await;
+                }
+            }
+        })
+    }
+
+    fn on_interaction<'a>(&'a self, ctx: Context, interaction: Interaction) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let _ = ctx.reply_ephemeral(&interaction, "Etkileşim alındı.").await;
+        })
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Bot::from_token("MICUP_BOT_TOKEN")
+        .intents(Intents::default_intents() | Intents::GUILD_VOICE_STATES)
+        .handler(MyBot)
+        .run()
+        .await?;
+
+    Ok(())
+}
+```
 
 ---
 
 ## 🚀 Çözülen Micup / Fluxer Sorunları & Özel Sistemler
 
 1. **3B Oda Sahnesi Desteği (`stage.rs`):**
-   - Micup'a özgü sesli kanal 3B odasında botun sunucu NPC karakteri (`host`) olarak durması.
+   - Sesli kanal 3B odasında botun sunucu NPC karakteri (`host`) olarak durması.
    - TV'de Neon, Tahta ve Sade stil panolar (`StageBoard`), skor tabloları ve video (`StageVideo`) oynatımı.
    - TV panosuna interaktif mesaj butonları bağlama ve tıklama etkileşimlerini karşılama.
    - Odadaki herkese tek seferlik anlar (konfeti, spot ışığı, karakter dansı/dalgası/emojisi) gönderme (`VoiceRoomEffect`).
+   - `ctx.set_stage_board(...)`, `ctx.stage_confetti(...)`, `ctx.stage_spotlight(...)` kısayolları.
 
 2. **Micup İzin Bitleri (`permissions.rs`):**
    - Micup'a özgü `MANAGE_ROOM_STAGE` (`1 << 62`), `PIN_MESSAGES` (`1 << 51`), `BYPASS_SLOWMODE` (`1 << 52`), `UPDATE_RTC_REGION` (`1 << 53`) ve `VIEW_CHANNEL_MEMBERS` (`1 << 54`) izin bitleri.
@@ -22,7 +119,6 @@ Standart Discord kütüphaneleri (Serenity, Twilight vb.) Micup üzerinde kullan
    - Otomatik `Resume (op 6)` ve `session_id` / `last_seq` takibi ile kesintisiz yeniden bağlanma.
    - Heartbeat ACK takibi ile zombi bağlantı tespiti ve otomatik soket yenileme.
    - `Opcode 7 (Reconnect)` ve `Opcode 9 (Invalid Session)` akıllı kurtarma.
-   - Bot durum metni (`Custom Status`) ve presence desteği (`with_presence`).
    - Tür güvenli Gateway Olay Ayrıştırması (`shard.run_typed` & `Event` enum): `MessageCreate`, `InteractionCreate`, `VoiceStateUpdate` vb.
 
 4. **Otomatik Hız Sınırı Koruması (429 Rate-Limit Retry):**
@@ -61,78 +157,6 @@ Standart Discord kütüphaneleri (Serenity, Twilight vb.) Micup üzerinde kullan
 - **Slash Komutları:** `get_global_commands()`, `set_global_commands()`, `get_guild_commands()`, `set_guild_commands()`
 - **Etkileşim Yanıtları:** `create_interaction_response()`, `create_followup_message()`
 - **Denetim & Güvenlik:** `get_audit_logs()`, `get_bans()`, `get_guild_invites()`
-
----
-
-## 🛠️ Örnek Kullanım: 3B Oda Sahnesi Kurulumu
-
-```rust
-use micup::prelude::*;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new("MICUP_BOT_TOKEN")?;
-    let channel_id = 1567986170364166155; // Sesli kanal ID
-
-    // 1. TV Panosu ve Skor Tablosu Hazırla
-    let board = StageBoard::new()
-        .style(BoardStyle::Neon)
-        .title("Bilgi Yarışması")
-        .text("Soru 1: Micup bot kütüphanesi nedir?")
-        .accent(0x7c5cff)
-        .score(ScoreboardEntry::new("Kerem", 100))
-        .score(ScoreboardEntry::new("Oyuncu 2", 80));
-
-    // 2. Sahneyi TV panosu ve Sunucu NPC karakteri ile kur
-    let stage = SetVoiceRoomStage::new()
-        .board(board)
-        .host(StageHost::new("ithp-kulaklik").shirt_color(0x00FF88))
-        .ttl(1800);
-
-    client.set_voice_room_stage(channel_id, &stage).await?;
-
-    // 3. Odaya konfeti efekti gönder
-    client.send_voice_room_effect(channel_id, &VoiceRoomEffect::confetti()).await?;
-
-    Ok(())
-}
-```
-
----
-
-## 🛠️ Örnek Kullanım: Tür Güvenli Gateway Olay Döngüsü
-
-```rust
-use micup::prelude::*;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let token = "MICUP_BOT_TOKEN";
-    let shard = Shard::new(token, 513) // Guilds (1) | GuildMessages (512)
-        .with_presence("online", Some("micup-rs v0.3.0"));
-
-    // Olaylar otomatik olarak tür güvenli Event enum'una dönüştürülür
-    shard.run_typed(|event| async move {
-        match event {
-            Event::Ready(ready) => {
-                println!("Bot bağlandı! Kullanıcı: {} (ID: {})", ready.user.username, ready.user.id);
-            }
-            Event::MessageCreate(msg) => {
-                println!("[#{:?}] {}: {}", msg.channel_id, msg.author.map(|u| u.username).unwrap_or_default(), msg.content);
-            }
-            Event::InteractionCreate(interaction) => {
-                println!("Yeni etkileşim alındı (ID: {})", interaction.id);
-            }
-            Event::VoiceStateUpdate(voice) => {
-                println!("Ses durumu güncellendi: kullanıcı {}", voice.user_id);
-            }
-            _ => {}
-        }
-    }).await?;
-
-    Ok(())
-}
-```
 
 ---
 
