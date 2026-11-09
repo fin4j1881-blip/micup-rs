@@ -5,6 +5,7 @@
 //! Çalıştırmak için:
 //! `MICUP_TOKEN="bot_tokeniniz" cargo run --example vibe_coding_bot`
 
+use micup::model::ButtonStyle;
 use micup::prelude::*;
 use std::env;
 
@@ -37,10 +38,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         color: 0x7c5cff,
                         fields: [
                             ("!ping", "Botun calisip calismadigini test eder", true),
+                            ("!buton", "Makro ile olusturulan buton bilesenini gonderir", true),
                             ("!sahne", "3B sesli odaya TV panosu kurar", true),
                         ],
                     };
                     let _ = ctx.send_embed(channel_id.get(), e).await;
+                }
+            } else if msg.content == "!buton" {
+                if let Some(channel_id) = msg.channel_id {
+                    let btn = button!("Ornek Buton", "btn_ornek", ButtonStyle::Primary);
+                    let row = action_row![btn];
+                    let _ = ctx
+                        .send_components(channel_id.get(), Some("Bilesen ornegi:"), vec![row])
+                        .await;
                 }
             }
         })
@@ -56,4 +66,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vibe_bot_macros_and_validation() {
+        let e = embed! {
+            title: "Yardim Menusu",
+            description: "micup-rs kütüphanesiyle kolayca bot yapin.",
+            color: 0x7c5cff,
+            fields: [
+                ("!ping", "Botun calisip calismadigini test eder", true),
+                ("!buton", "Makro ile olusturulan buton bilesenini gonderir", true),
+            ],
+        };
+        assert_eq!(e.title.as_deref(), Some("Yardim Menusu"));
+
+        let btn = button!("Ornek Buton", "btn_ornek", ButtonStyle::Primary);
+        let row = action_row![btn];
+        let json = serde_json::to_value(&row).expect("Serileştirme başarılı olmalı");
+        assert_eq!(json["type"], 1);
+    }
 }

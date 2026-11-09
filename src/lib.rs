@@ -26,6 +26,10 @@ pub mod interaction;
 #[macro_use]
 pub mod macros;
 pub mod models;
+pub mod model {
+    pub use crate::components::*;
+    pub use crate::models::*;
+}
 pub mod permissions;
 pub mod stage;
 
@@ -91,7 +95,7 @@ pub mod prelude {
         BoardStyle, ScoreboardEntry, SetVoiceRoomStage, StageBoard, StageHost, StageTv, StageVideo,
         VoiceRoomEffect, VoiceRoomStage,
     };
-    pub use crate::{button, embed};
+    pub use crate::{action_row, button, embed, select_menu};
 }
 
 #[cfg(test)]
@@ -149,6 +153,22 @@ mod tests {
         let json = serde_json::to_value(&b).unwrap();
         assert_eq!(json["label"], "Onayla");
         assert_eq!(json["custom_id"], "btn_ok");
+
+        let row = action_row![b.clone()];
+        let row_json = serde_json::to_value(&row).unwrap();
+        assert_eq!(row_json["type"], 1);
+
+        let menu = select_menu! {
+            custom_id: "secim",
+            placeholder: "Secim yap",
+            options: [
+                ("A", "val_a"),
+                ("B", "val_b", "Detay B"),
+            ],
+        };
+        let menu_json = serde_json::to_value(&menu).unwrap();
+        assert_eq!(menu_json["custom_id"], "secim");
+        assert_eq!(menu_json["options"].as_array().unwrap().len(), 2);
     }
 
     #[test]
@@ -259,5 +279,70 @@ mod tests {
             }
             _ => panic!("VOICE_SERVER_UPDATE beklenen sekilde parse edilemedi"),
         }
+    }
+
+    #[test]
+    fn test_prelude_exports() {
+        use crate::prelude::*;
+
+        let _bot = Bot::from_token("test_token");
+        let _ctx = Context::new(std::sync::Arc::new(Client::new("token").unwrap()));
+        let _intents = Intents::default_intents();
+        let _perms = Permissions::new(Permissions::MANAGE_ROOM_STAGE);
+        let _embed = Embed::new().title("Test");
+        let _comp = Component::button(ButtonStyle::Primary, "Test", "btn_1");
+        let _board = StageBoard::new();
+        let _video = StageVideo::new("https://media.micup.gg/video.mp4");
+        let _effect = VoiceRoomEffect::confetti();
+        let _row = action_row![button!("Click", "btn_click", Primary)];
+        let _macro_embed = embed! {
+            title: "Test",
+            description: "Desc",
+        };
+        let _select = select_menu! {
+            custom_id: "menu_1",
+            options: [("Opt1", "val1")],
+        };
+    }
+
+    #[test]
+    fn test_event_handler_trait_box_future() {
+        use crate::prelude::*;
+
+        struct CustomHandler;
+
+        impl EventHandler for CustomHandler {
+            fn on_ready<'a>(&'a self, _ctx: Context, _ready: ReadyEvent) -> BoxFuture<'a, ()> {
+                Box::pin(async move {})
+            }
+
+            fn on_message<'a>(&'a self, _ctx: Context, _msg: Message) -> BoxFuture<'a, ()> {
+                Box::pin(async move {})
+            }
+
+            fn on_interaction<'a>(
+                &'a self,
+                _ctx: Context,
+                _interaction: Interaction,
+            ) -> BoxFuture<'a, ()> {
+                Box::pin(async move {})
+            }
+
+            fn on_event<'a>(&'a self, _ctx: Context, _event: Event) -> BoxFuture<'a, ()> {
+                Box::pin(async move {})
+            }
+        }
+
+        let handler = CustomHandler;
+        let ctx = Context::new(std::sync::Arc::new(Client::new("token").unwrap()));
+        let raw = serde_json::json!({
+            "id": "123456789",
+            "content": "Test",
+            "pinned": false,
+            "mention_everyone": false
+        });
+        let msg: Message = serde_json::from_value(raw).unwrap();
+        let fut = handler.on_message(ctx, msg);
+        tokio::runtime::Runtime::new().unwrap().block_on(fut);
     }
 }

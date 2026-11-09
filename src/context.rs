@@ -33,6 +33,10 @@ impl Context {
         self
     }
 
+    // =========================================================================
+    // Mesaj Gönderme ve Yönetimi (Message Sending & Management)
+    // =========================================================================
+
     /// Bir kanala hızlıca düz metin mesajı gönderir.
     pub async fn say(
         &self,
@@ -51,6 +55,17 @@ impl Context {
             .await
     }
 
+    /// Bir kanala birden fazla Embed içeren mesaj gönderir.
+    pub async fn send_embeds(
+        &self,
+        channel_id: u64,
+        embeds: Vec<Embed>,
+    ) -> Result<Message, MicupError> {
+        self.client
+            .send_message(channel_id, None, embeds, vec![])
+            .await
+    }
+
     /// Bir kanala buton veya menü içeren mesaj gönderir.
     pub async fn send_components(
         &self,
@@ -62,6 +77,77 @@ impl Context {
             .send_message(channel_id, content, vec![], components)
             .await
     }
+
+    /// Bir kanala hem metin, hem Embed hem de bileşen içeren tam teşekküllü mesaj gönderir.
+    pub async fn send_message(
+        &self,
+        channel_id: u64,
+        content: Option<&str>,
+        embeds: Vec<Embed>,
+        components: Vec<Component>,
+    ) -> Result<Message, MicupError> {
+        self.client
+            .send_message(channel_id, content, embeds, components)
+            .await
+    }
+
+    /// Dosya ekleriyle birlikte mesaj gönderir (`multipart/form-data`).
+    pub async fn send_message_with_files(
+        &self,
+        channel_id: u64,
+        content: Option<&str>,
+        embeds: Vec<Embed>,
+        components: Vec<Component>,
+        files: Vec<(&str, Vec<u8>)>,
+    ) -> Result<Message, MicupError> {
+        self.client
+            .send_message_with_files(channel_id, content, embeds, components, files)
+            .await
+    }
+
+    /// Bir kanaldaki mesajı düzenler.
+    pub async fn edit(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        content: impl AsRef<str>,
+    ) -> Result<Message, MicupError> {
+        self.client
+            .edit_message(
+                channel_id,
+                message_id,
+                Some(content.as_ref()),
+                vec![],
+                vec![],
+            )
+            .await
+    }
+
+    /// Bir kanaldaki mesajı siler.
+    pub async fn delete(&self, channel_id: u64, message_id: u64) -> Result<(), MicupError> {
+        self.client.delete_message(channel_id, message_id).await
+    }
+
+    /// Bir mesaja tepki (emoji) ekler.
+    pub async fn react(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        emoji: impl AsRef<str>,
+    ) -> Result<(), MicupError> {
+        self.client
+            .create_reaction(channel_id, message_id, emoji.as_ref())
+            .await
+    }
+
+    /// Bir kanalda botun yazıyor olduğunu belirtir (`POST /channels/{channel_id}/typing`).
+    pub async fn typing(&self, channel_id: u64) -> Result<(), MicupError> {
+        self.client.trigger_typing(channel_id).await
+    }
+
+    // =========================================================================
+    // Etkileşim Yanıtları (Interaction Responses)
+    // =========================================================================
 
     /// Gelen etkileşime hızlıca metin yanıtı verir.
     pub async fn reply(
@@ -108,6 +194,57 @@ impl Context {
             .await
     }
 
+    /// Gelen etkileşime birden fazla Embed içeren yanıt verir.
+    pub async fn reply_embeds(
+        &self,
+        interaction: &Interaction,
+        embeds: Vec<Embed>,
+        ephemeral: bool,
+    ) -> Result<(), MicupError> {
+        let resp = InteractionResponse::message(
+            InteractionResponseMessage::new()
+                .embeds(embeds)
+                .ephemeral(ephemeral),
+        );
+        self.client
+            .create_interaction_response(interaction.id.get(), &interaction.token, &resp)
+            .await
+    }
+
+    /// Gelen etkileşime bileşenler (buton/menü) içeren yanıt verir.
+    pub async fn reply_components(
+        &self,
+        interaction: &Interaction,
+        content: Option<&str>,
+        components: Vec<Component>,
+        ephemeral: bool,
+    ) -> Result<(), MicupError> {
+        let mut msg = InteractionResponseMessage::new()
+            .components(components)
+            .ephemeral(ephemeral);
+        if let Some(text) = content {
+            msg = msg.content(text);
+        }
+        let resp = InteractionResponse::message(msg);
+        self.client
+            .create_interaction_response(interaction.id.get(), &interaction.token, &resp)
+            .await
+    }
+
+    /// Etkileşime yanıt olarak modal (açılır form penceresi) gönderir.
+    pub async fn reply_modal(
+        &self,
+        interaction: &Interaction,
+        custom_id: impl Into<String>,
+        title: impl Into<String>,
+        components: Vec<Component>,
+    ) -> Result<(), MicupError> {
+        let resp = InteractionResponse::modal(custom_id, title, components);
+        self.client
+            .create_interaction_response(interaction.id.get(), &interaction.token, &resp)
+            .await
+    }
+
     /// 3 saniyelik zaman aşımını aşmak için etkileşimi hemen ertele (Düşünüyor... durumu).
     pub async fn defer(
         &self,
@@ -115,6 +252,34 @@ impl Context {
         ephemeral: bool,
     ) -> Result<(), MicupError> {
         let resp = InteractionResponse::defer(ephemeral);
+        self.client
+            .create_interaction_response(interaction.id.get(), &interaction.token, &resp)
+            .await
+    }
+
+    /// Buton veya menü etkileşimini defer eder (mesajda yükleniyor göstermez, bileşeni onaylar).
+    pub async fn defer_update(&self, interaction: &Interaction) -> Result<(), MicupError> {
+        let resp = InteractionResponse::defer_update();
+        self.client
+            .create_interaction_response(interaction.id.get(), &interaction.token, &resp)
+            .await
+    }
+
+    /// Buton veya menü etkileşiminin kaynak mesajını günceller.
+    pub async fn update_message(
+        &self,
+        interaction: &Interaction,
+        content: Option<&str>,
+        embeds: Vec<Embed>,
+        components: Vec<Component>,
+    ) -> Result<(), MicupError> {
+        let mut msg = InteractionResponseMessage::new()
+            .embeds(embeds)
+            .components(components);
+        if let Some(text) = content {
+            msg = msg.content(text);
+        }
+        let resp = InteractionResponse::update_message(msg);
         self.client
             .create_interaction_response(interaction.id.get(), &interaction.token, &resp)
             .await
@@ -130,6 +295,40 @@ impl Context {
         let msg = InteractionResponseMessage::new()
             .content(content)
             .ephemeral(ephemeral);
+        self.client
+            .create_followup_message(interaction.application_id.get(), &interaction.token, &msg)
+            .await
+    }
+
+    /// Ertelenmiş etkileşime Embed içeren takip mesajı (follow-up) gönderir.
+    pub async fn followup_embed(
+        &self,
+        interaction: &Interaction,
+        embed: Embed,
+        ephemeral: bool,
+    ) -> Result<serde_json::Value, MicupError> {
+        let msg = InteractionResponseMessage::new()
+            .embed(embed)
+            .ephemeral(ephemeral);
+        self.client
+            .create_followup_message(interaction.application_id.get(), &interaction.token, &msg)
+            .await
+    }
+
+    /// Ertelenmiş etkileşime bileşenler içeren takip mesajı (follow-up) gönderir.
+    pub async fn followup_components(
+        &self,
+        interaction: &Interaction,
+        content: Option<&str>,
+        components: Vec<Component>,
+        ephemeral: bool,
+    ) -> Result<serde_json::Value, MicupError> {
+        let mut msg = InteractionResponseMessage::new()
+            .components(components)
+            .ephemeral(ephemeral);
+        if let Some(text) = content {
+            msg = msg.content(text);
+        }
         self.client
             .create_followup_message(interaction.application_id.get(), &interaction.token, &msg)
             .await
@@ -216,5 +415,40 @@ impl Context {
         self.client
             .send_voice_room_effect(channel_id, &VoiceRoomEffect::dance())
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_context_construction() {
+        let client = Arc::new(Client::new("test_token").unwrap());
+        let ctx = Context::new(client);
+        assert!(ctx.shard_sender.is_none());
+
+        let shard = crate::gateway::Shard::new("test_token", 0);
+        let ctx = ctx.with_shard_sender(shard.sender());
+        assert!(ctx.shard_sender.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_context_voice_without_shard() {
+        let client = Arc::new(Client::new("test_token").unwrap());
+        let ctx = Context::new(client);
+        assert!(ctx.join_voice(1, 2, false, false, false).is_err());
+        assert!(ctx.set_camera(1, 2, true).is_err());
+        assert!(ctx.leave_voice(1).is_err());
+    }
+
+    #[test]
+    fn test_context_voice_with_shard() {
+        let client = Arc::new(Client::new("test_token").unwrap());
+        let shard = crate::gateway::Shard::new("test_token", 0);
+        let ctx = Context::new(client).with_shard_sender(shard.sender());
+        assert!(ctx.join_voice(1, 2, false, false, true).is_ok());
+        assert!(ctx.set_camera(1, 2, false).is_ok());
+        assert!(ctx.leave_voice(1).is_ok());
     }
 }

@@ -1,4 +1,4 @@
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, RETRY_AFTER, USER_AGENT};
 use serde::Serialize;
 use serde_json::Value;
 use std::time::Duration;
@@ -25,6 +25,10 @@ fn url_encode(s: &str) -> String {
     }
     out
 }
+
+pub type RestClient = Client;
+pub type MicupClient = Client;
+pub type Error = MicupError;
 
 #[derive(Clone)]
 pub struct Client {
@@ -64,6 +68,11 @@ impl Client {
         self
     }
 
+    /// Hız sınırı durumunda yapılandırılmış maksimum tekrar deneme sayısını döner.
+    pub fn max_retries(&self) -> u32 {
+        self.max_retries
+    }
+
     pub fn token(&self) -> &str {
         &self.token
     }
@@ -75,9 +84,7 @@ impl Client {
     /// Micup platform keşif yapılandırmasını getirir (`GET /.well-known/fluxer`).
     pub async fn get_discovery(&self) -> Result<FluxerDiscovery, MicupError> {
         let resp = self
-            .http
-            .get("https://micup.gg/.well-known/fluxer")
-            .send()
+            .execute_with_retry(|| self.http.get("https://micup.gg/.well-known/fluxer"))
             .await?;
         Self::handle_response(resp).await
     }
@@ -415,8 +422,6 @@ impl Client {
         components: Vec<Component>,
         files: Vec<(&str, Vec<u8>)>,
     ) -> Result<Message, MicupError> {
-        let mut form = reqwest::multipart::Form::new();
-
         #[derive(Serialize)]
         struct Payload<'a> {
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -433,15 +438,22 @@ impl Client {
             components,
         };
         let payload_json = serde_json::to_string(&p)?;
-        form = form.text("payload_json", payload_json);
 
-        for (i, (filename, bytes)) in files.into_iter().enumerate() {
-            let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string());
-            form = form.part(format!("files[{i}]"), part);
-        }
+        let build_form = || {
+            let mut form = reqwest::multipart::Form::new();
+            form = form.text("payload_json", payload_json.clone());
+            for (i, (filename, bytes)) in files.iter().enumerate() {
+                let part =
+                    reqwest::multipart::Part::bytes(bytes.clone()).file_name(filename.to_string());
+                form = form.part(format!("files[{i}]"), part);
+            }
+            form
+        };
 
         let url = format!("{}/channels/{channel_id}/messages", self.base_url);
-        let resp = self.http.post(&url).multipart(form).send().await?;
+        let resp = self
+            .execute_with_retry(|| self.http.post(&url).multipart(build_form()))
+            .await?;
         Self::handle_response(resp).await
     }
 
@@ -517,6 +529,12 @@ impl Client {
             )
             .await?;
         Ok(())
+    }
+
+    /// Bir kanalda botun yazıyor olduğunu tetikler (`POST /channels/{id}/typing`).
+    pub async fn trigger_typing(&self, channel_id: u64) -> Result<(), MicupError> {
+        self.post_empty(&format!("/channels/{channel_id}/typing"))
+            .await
     }
 
     // =========================================================================
@@ -606,6 +624,16 @@ impl Client {
         .await
     }
 
+    /// Mesaja tepki ekler (`PUT /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`).
+    pub async fn add_reaction(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        emoji: &str,
+    ) -> Result<(), MicupError> {
+        self.create_reaction(channel_id, message_id, emoji).await
+    }
+
     /// Kendi tepkisini siler (`DELETE /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`).
     pub async fn delete_own_reaction(
         &self,
@@ -618,6 +646,17 @@ impl Client {
             "/channels/{channel_id}/messages/{message_id}/reactions/{enc}/@me"
         ))
         .await
+    }
+
+    /// Kendi tepkisini siler (`DELETE /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`).
+    pub async fn remove_reaction(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        emoji: &str,
+    ) -> Result<(), MicupError> {
+        self.delete_own_reaction(channel_id, message_id, emoji)
+            .await
     }
 
     /// Bir kullanıcının tepkisini siler (`DELETE /channels/{id}/messages/{message_id}/reactions/{emoji}/{user_id}`).
@@ -633,6 +672,18 @@ impl Client {
             "/channels/{channel_id}/messages/{message_id}/reactions/{enc}/{user_id}"
         ))
         .await
+    }
+
+    /// Bir kullanıcının tepkisini siler (`DELETE /channels/{id}/messages/{message_id}/reactions/{emoji}/{user_id}`).
+    pub async fn remove_user_reaction(
+        &self,
+        channel_id: u64,
+        message_id: u64,
+        emoji: &str,
+        user_id: u64,
+    ) -> Result<(), MicupError> {
+        self.delete_user_reaction(channel_id, message_id, emoji, user_id)
+            .await
     }
 
     /// Bir tepkiyi veren kullanıcıları listeler (`GET /channels/{id}/messages/{message_id}/reactions/{emoji}`).
@@ -719,10 +770,17 @@ impl Client {
             "{}/channels/{channel_id}/voice-room/stage/effects",
             self.base_url
         );
-        let resp = self.http.post(&url).json(effect).send().await?;
+        let resp = self
+            .execute_with_retry(|| self.http.post(&url).json(effect))
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
+            if status == 429 {
+                return Err(MicupError::RateLimited(format!(
+                    "429 Too Many Requests: {body}"
+                )));
+            }
             return Err(MicupError::Api {
                 status,
                 message: body,
@@ -798,10 +856,17 @@ impl Client {
             "{}/interactions/{interaction_id}/{interaction_token}/callback",
             self.base_url
         );
-        let resp = self.http.post(&url).json(response).send().await?;
+        let resp = self
+            .execute_with_retry(|| self.http.post(&url).json(response))
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
+            if status == 429 {
+                return Err(MicupError::RateLimited(format!(
+                    "429 Too Many Requests: {body}"
+                )));
+            }
             return Err(MicupError::Api {
                 status,
                 message: body,
@@ -906,6 +971,32 @@ impl Client {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
+            if status == 429 {
+                return Err(MicupError::RateLimited(format!(
+                    "429 Too Many Requests: {body}"
+                )));
+            }
+            return Err(MicupError::Api {
+                status,
+                message: body,
+            });
+        }
+        Ok(())
+    }
+
+    async fn post_empty(&self, path: &str) -> Result<(), MicupError> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .execute_with_retry(|| self.http.post(&url).header("Content-Length", 0))
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            if status == 429 {
+                return Err(MicupError::RateLimited(format!(
+                    "429 Too Many Requests: {body}"
+                )));
+            }
             return Err(MicupError::Api {
                 status,
                 message: body,
@@ -920,6 +1011,11 @@ impl Client {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
+            if status == 429 {
+                return Err(MicupError::RateLimited(format!(
+                    "429 Too Many Requests: {body}"
+                )));
+            }
             return Err(MicupError::Api {
                 status,
                 message: body,
@@ -951,12 +1047,32 @@ impl Client {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
+            if status == 429 {
+                return Err(MicupError::RateLimited(format!(
+                    "429 Too Many Requests: {body}"
+                )));
+            }
             return Err(MicupError::Api {
                 status,
                 message: body,
             });
         }
         Ok(())
+    }
+
+    /// 429 yanıtında `Retry-After` başlığını asenkron bekleme süresine dönüştürür.
+    pub(crate) fn parse_retry_after(resp: &reqwest::Response) -> Duration {
+        if let Some(header_val) = resp.headers().get(RETRY_AFTER) {
+            if let Ok(s) = header_val.to_str() {
+                if let Ok(secs) = s.trim().parse::<f64>() {
+                    if secs > 0.0 && secs.is_finite() {
+                        return Duration::from_millis((secs * 1000.0).ceil() as u64);
+                    }
+                }
+            }
+        }
+        // Başlık bulunamazsa veya geçersizse varsayılan 1 saniye bekle
+        Duration::from_secs(1)
     }
 
     async fn execute_with_retry<F>(&self, make_req: F) -> Result<reqwest::Response, MicupError>
@@ -967,21 +1083,29 @@ impl Client {
         loop {
             let resp = make_req().send().await?;
             let status = resp.status();
-            if status.as_u16() == 429 && retries < self.max_retries {
-                let wait_secs = resp
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .unwrap_or(1.0);
-                let duration = Duration::from_millis((wait_secs * 1000.0).ceil() as u64);
-                tracing::warn!(
-                    retry_after_secs = wait_secs,
-                    "Micup API 429 Hız Sınırı: bekleniyor ve tekrar denenecek..."
-                );
-                tokio::time::sleep(duration).await;
-                retries += 1;
-                continue;
+            if status.as_u16() == 429 {
+                if retries < self.max_retries {
+                    let duration = Self::parse_retry_after(&resp);
+                    let wait_secs = duration.as_secs_f64();
+                    tracing::warn!(
+                        retry_after_secs = wait_secs,
+                        retries = retries + 1,
+                        max_retries = self.max_retries,
+                        "Micup API 429 Hız Sınırı: bekleniyor ve tekrar denenecek..."
+                    );
+                    tokio::time::sleep(duration).await;
+                    retries += 1;
+                    continue;
+                } else {
+                    let body = resp.text().await.unwrap_or_default();
+                    let msg = if body.is_empty() {
+                        "429 Too Many Requests (maksimum yeniden deneme sayısına ulaşıldı)"
+                            .to_string()
+                    } else {
+                        format!("429 Too Many Requests: {body}")
+                    };
+                    return Err(MicupError::RateLimited(msg));
+                }
             }
             return Ok(resp);
         }
@@ -991,6 +1115,12 @@ impl Client {
         resp: reqwest::Response,
     ) -> Result<T, MicupError> {
         let status = resp.status();
+        if status.as_u16() == 429 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(MicupError::RateLimited(format!(
+                "429 Too Many Requests: {body}"
+            )));
+        }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(MicupError::Api {
@@ -1000,5 +1130,94 @@ impl Client {
         }
         let parsed = resp.json::<T>().await?;
         Ok(parsed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_builder_and_retries() {
+        let client = Client::new("test_token").unwrap();
+        assert_eq!(client.max_retries(), 3);
+        let client = client.with_max_retries(5);
+        assert_eq!(client.max_retries(), 5);
+        assert_eq!(client.token(), "test_token");
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_retry_success() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            // İlk istek 429 döner
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let response = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0.02\r\nContent-Length: 12\r\n\r\nrate limited";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+            // İkinci istek 200 OK döner
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let body =
+                    r#"{"id":"100","username":"retry_bot","discriminator":"0001","avatar":null}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let mut client = Client::new("test_token").unwrap();
+        client.base_url = format!("http://127.0.0.1:{port}");
+        let client = client.with_max_retries(2);
+
+        let user: User = client
+            .get("/users/@me")
+            .await
+            .expect("Yeniden deneme ile başarılı olmalı");
+        assert_eq!(user.username, "retry_bot");
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_retry_and_exceeded() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            for _ in 0..3 {
+                if let Ok((mut socket, _)) = listener.accept().await {
+                    let mut buf = [0u8; 1024];
+                    let _ = socket.read(&mut buf).await;
+                    let response = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0.01\r\nContent-Length: 12\r\n\r\nrate limited";
+                    let _ = socket.write_all(response.as_bytes()).await;
+                }
+            }
+        });
+
+        let mut client = Client::new("test_token").unwrap();
+        client.base_url = format!("http://127.0.0.1:{port}");
+        let client = client.with_max_retries(1);
+
+        let res: Result<User, MicupError> = client.get("/users/@me").await;
+        assert!(res.is_err());
+        match res.unwrap_err() {
+            MicupError::RateLimited(msg) => {
+                assert!(msg.contains("429"));
+            }
+            other => panic!("Beklenen RateLimited hatası, alınan: {:?}", other),
+        }
     }
 }
